@@ -4,7 +4,6 @@
 #include <cstdlib>
 #include <iostream>
 
-#include "networking.pb.h"
 #include "pb_decode.h"
 #include "pb_encode.h"
 
