@@ -33,7 +33,7 @@ void NetworkSession::Terminate() {
     dispatchCv.notify_one();
 }
 
-bool NetworkSession::DispatchRpc(void* data, size_t len) {
+bool NetworkSession::DispatchRpc(const void* data, size_t len) {
     unique_lock lock(dispatchMutex);
 
     if (terminateRequested) {
@@ -47,6 +47,7 @@ bool NetworkSession::DispatchRpc(void* data, size_t len) {
     }
 
     if (rpcRequest.size() < len) rpcRequest.resize(len);
+    rpcRequestSize = len;
     memcpy(rpcRequest.data(), data, len);
 
     rpcRequestPending = true;
@@ -68,17 +69,26 @@ void NetworkSession::WorkerMain() {
             if (terminateRequested) break;
         }
 
-        HandleRpcRequest();
+        pb_istream_t stream = pb_istream_from_buffer(rpcRequest.data(), rpcRequestSize);
+        MsgRequest request;
+
+        if (!pb_decode(&stream, MsgRequest_fields, &request)) {
+            cerr << "failed to decode RPC request" << endl;
+        }
+
+        HandleRpcRequest(request);
     }
 
     worker.detach();
     hasTerminated = true;
 }
 
-void NetworkSession::HandleRpcRequest() {
+void NetworkSession::HandleRpcRequest(MsgRequest& request) {
     MsgResponse response = MsgResponse_init_zero;
 
     response.which_payload = MsgResponse_invalidRequestResponse_tag;
+
+    response.id = request.id;
     response.payload.invalidRequestResponse.tag = true;
 
     SendResponse(response, RESPONSE_STATIC_SIZE);

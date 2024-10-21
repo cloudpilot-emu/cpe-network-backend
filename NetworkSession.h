@@ -14,7 +14,7 @@
 
 class NetworkSession {
    public:
-    using RpcResultCb = std::function<void(void* data, size_t len)>;
+    using RpcResultCb = std::function<void(const void* data, size_t len)>;
 
    public:
     explicit NetworkSession(RpcResultCb resultCb);
@@ -22,20 +22,21 @@ class NetworkSession {
     void Start();
     void Terminate();
 
-    bool DispatchRpc(void* data, size_t len);
+    bool DispatchRpc(const void* data, size_t len);
 
     bool HasTerminated();
 
    private:
     void WorkerMain();
 
-    void HandleRpcRequest();
+    void HandleRpcRequest(MsgRequest& request);
     void SendResponse(MsgResponse& response, size_t size);
 
    private:
     RpcResultCb resultCb;
 
     std::vector<uint8_t> rpcRequest;
+    size_t rpcRequestSize{0};
     bool rpcRequestPending{false};
 
     std::vector<uint8_t> rpcResponse;
