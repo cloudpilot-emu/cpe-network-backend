@@ -27,14 +27,14 @@ void NetworkSession::Start() {
 }
 
 void NetworkSession::Terminate() {
-    unique_lock lock(dispatchMutex);
+    unique_lock<mutex> lock(dispatchMutex);
 
     terminateRequested = true;
     dispatchCv.notify_one();
 }
 
 bool NetworkSession::DispatchRpc(const uint8_t* data, size_t len) {
-    unique_lock lock(dispatchMutex);
+    unique_lock<mutex> lock(dispatchMutex);
 
     if (terminateRequested) {
         cerr << "unable to dispatch: session is already terminating" << endl;
@@ -61,7 +61,7 @@ bool NetworkSession::HasTerminated() { return !hasStarted || hasTerminated; }
 void NetworkSession::WorkerMain() {
     while (true) {
         {
-            unique_lock lock(dispatchMutex);
+            unique_lock<mutex> lock(dispatchMutex);
 
             rpcRequestPending = false;
             while (!rpcRequestPending && !terminateRequested) dispatchCv.wait(lock);
