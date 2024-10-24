@@ -4,11 +4,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include <cstdint>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef void (*net_RpcResultCb)(unsigned int sessiondId, const void* data, size_t len,
+typedef void (*net_RpcResultCb)(unsigned int sessiondId, const uint8_t* data, size_t len,
                                 void* context);
 
 void net_setRpcCallback(net_RpcResultCb resultCb, void* context);
@@ -16,7 +18,7 @@ void net_setRpcCallback(net_RpcResultCb resultCb, void* context);
 unsigned int net_openSession();
 void net_closeSession(unsigned int sessionId);
 
-bool net_dispatchRpc(unsigned int sessionId, const void* data, size_t len);
+bool net_dispatchRpc(unsigned int sessionId, const uint8_t* data, size_t len);
 
 #ifdef __cplusplus
 }

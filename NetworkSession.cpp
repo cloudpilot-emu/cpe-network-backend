@@ -33,7 +33,7 @@ void NetworkSession::Terminate() {
     dispatchCv.notify_one();
 }
 
-bool NetworkSession::DispatchRpc(const void* data, size_t len) {
+bool NetworkSession::DispatchRpc(const uint8_t* data, size_t len) {
     unique_lock lock(dispatchMutex);
 
     if (terminateRequested) {
