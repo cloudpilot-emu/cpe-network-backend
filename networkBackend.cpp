@@ -11,7 +11,7 @@
 using namespace std;
 
 namespace {
-    void defaultResultCb(unsigned int sessiondId, const uint8_t* data, size_t len, void* context) {}
+    void defaultResultCb(uint32_t sessiondId, const uint8_t* data, size_t len, void* context) {}
 
     net_RpcResultCb resultCb = defaultResultCb;
     void* resultCbContext = nullptr;
@@ -35,7 +35,7 @@ void net_setRpcCallback(net_RpcResultCb resultCb, void* context) {
     resultCbContext = context;
 }
 
-unsigned int net_openSession() {
+uint32_t net_openSession() {
     cleanupTerminatedSessions();
 
     const uint32_t sessionId = nextSessionId++;
@@ -49,7 +49,7 @@ unsigned int net_openSession() {
     return sessionId;
 }
 
-void net_closeSession(unsigned int sessionId) {
+void net_closeSession(uint32_t sessionId) {
     const auto it = sessions.find(sessionId);
     if (sessions.find(sessionId) == sessions.end()) {
         cerr << "unable to close session: invalid session ID " << sessionId << endl;
@@ -64,7 +64,7 @@ void net_closeSession(unsigned int sessionId) {
     cleanupTerminatedSessions();
 }
 
-bool net_dispatchRpc(unsigned int sessionId, const uint8_t* data, size_t len) {
+bool net_dispatchRpc(uint32_t sessionId, const uint8_t* data, size_t len) {
     cleanupTerminatedSessions();
 
     const auto it = sessions.find(sessionId);

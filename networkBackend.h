@@ -9,15 +9,15 @@
 extern "C" {
 #endif
 
-typedef void (*net_RpcResultCb)(unsigned int sessiondId, const uint8_t* data, size_t len,
+typedef void (*net_RpcResultCb)(uint32_t sessiondId, const uint8_t* data, size_t len,
                                 void* context);
 
 void net_setRpcCallback(net_RpcResultCb resultCb, void* context);
 
 unsigned int net_openSession();
-void net_closeSession(unsigned int sessionId);
+void net_closeSession(uint32_t sessionId);
 
-bool net_dispatchRpc(unsigned int sessionId, const uint8_t* data, size_t len);
+bool net_dispatchRpc(uint32_t sessionId, const uint8_t* data, size_t len);
 
 #ifdef __cplusplus
 }

@@ -1,6 +1,7 @@
 #include "NetworkSession.h"
 
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <iostream>
 
@@ -8,6 +9,14 @@
 #include "pb_encode.h"
 
 using namespace std;
+
+#define LOGGING
+
+#ifdef LOGGING
+    #define LOG(...) fprintf(stderr, __VA_ARGS__);
+#else
+    #define LOG(...)
+#endif
 
 namespace {
     constexpr size_t INITIAL_SIZE_REQUEST = 1024;
@@ -24,6 +33,8 @@ void NetworkSession::Start() {
 
     worker = thread(bind(&NetworkSession::WorkerMain, this));
     hasStarted = true;
+
+    LOG("network session started\n");
 }
 
 void NetworkSession::Terminate() {
@@ -31,6 +42,8 @@ void NetworkSession::Terminate() {
 
     terminateRequested = true;
     dispatchCv.notify_one();
+
+    LOG("network session closed\n");
 }
 
 bool NetworkSession::DispatchRpc(const uint8_t* data, size_t len) {
