@@ -47,6 +47,8 @@ void NetworkSession::Terminate() {
 }
 
 bool NetworkSession::DispatchRpc(const uint8_t* data, size_t len) {
+    LOG("dispatch rpc\n");
+    
     unique_lock<mutex> lock(dispatchMutex);
 
     if (terminateRequested) {
@@ -87,6 +89,7 @@ void NetworkSession::WorkerMain() {
 
         if (!pb_decode(&stream, MsgRequest_fields, &request)) {
             cerr << "failed to decode RPC request" << endl;
+            request.id = ~0;
         }
 
         HandleRpcRequest(request);
