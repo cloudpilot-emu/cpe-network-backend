@@ -64,6 +64,16 @@ void net_closeSession(uint32_t sessionId) {
     cleanupTerminatedSessions();
 }
 
+void net_closeAllSessions()
+{
+    auto it = sessions.begin();
+
+    while (it != sessions.end()) {
+        auto current = it++;
+        net_closeSession(current->first);
+    }
+}
+
 bool net_dispatchRpc(uint32_t sessionId, const uint8_t* data, size_t len) {
     cleanupTerminatedSessions();
 

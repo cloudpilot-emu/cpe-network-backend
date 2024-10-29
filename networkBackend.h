@@ -15,7 +15,9 @@ typedef void (*net_RpcResultCb)(uint32_t sessiondId, const uint8_t* data, size_t
 void net_setRpcCallback(net_RpcResultCb resultCb, void* context);
 
 unsigned int net_openSession();
+
 void net_closeSession(uint32_t sessionId);
+void net_closeAllSessions();
 
 bool net_dispatchRpc(uint32_t sessionId, const uint8_t* data, size_t len);
 
