@@ -64,8 +64,7 @@ void net_closeSession(uint32_t sessionId) {
     cleanupTerminatedSessions();
 }
 
-void net_closeAllSessions()
-{
+void net_closeAllSessions() {
     auto it = sessions.begin();
 
     while (it != sessions.end()) {
