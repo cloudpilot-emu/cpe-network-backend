@@ -1,12 +1,14 @@
 #ifndef NETWORK_SESSION_H
 #define NETWORK_SESSION_H
 
+#include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -32,7 +34,18 @@ class NetworkSession {
     void HandleRpcRequest(MsgRequest& request);
     void SendResponse(MsgResponse& response, size_t size);
 
+    void HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse& response);
+
+    int32_t getFreeHandle();
+
    private:
+    struct SocketContext {
+        int fd;
+    };
+
+   private:
+    static constexpr size_t MAX_HANDLE = 31;
+
     RpcResultCb resultCb;
 
     std::vector<uint8_t> rpcRequest;
@@ -48,6 +61,8 @@ class NetworkSession {
     bool hasStarted{false};
     bool terminateRequested{false};
     std::atomic_bool hasTerminated{false};
+
+    std::array<std::optional<SocketContext>, MAX_HANDLE + 1> sockets;
 
    private:
     NetworkSession(const NetworkSession&) = delete;

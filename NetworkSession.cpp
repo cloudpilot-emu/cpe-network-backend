@@ -1,10 +1,14 @@
 #include "NetworkSession.h"
 
+#include <sys/socket.h>
+
+#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
 
+#include "codes.h"
 #include "pb_decode.h"
 #include "pb_encode.h"
 
@@ -23,6 +27,22 @@ namespace {
     constexpr size_t INITIAL_SIZE_RESPONSE = 1024;
 
     constexpr size_t RESPONSE_STATIC_SIZE = 128;
+
+    int mapSocketType(uint32_t palmType) {
+        switch (palmType) {
+            case 1:
+                return SOCK_STREAM;
+
+            case 2:
+                return SOCK_DGRAM;
+
+            case 3:
+                return SOCK_RAW;
+
+            default:
+                return -1;
+        }
+    }
 }  // namespace
 
 NetworkSession::NetworkSession(RpcResultCb resultCb)
@@ -48,7 +68,7 @@ void NetworkSession::Terminate() {
 
 bool NetworkSession::DispatchRpc(const uint8_t* data, size_t len) {
     LOG("dispatch rpc\n");
-    
+
     unique_lock<mutex> lock(dispatchMutex);
 
     if (terminateRequested) {
@@ -102,12 +122,64 @@ void NetworkSession::WorkerMain() {
 void NetworkSession::HandleRpcRequest(MsgRequest& request) {
     MsgResponse response = MsgResponse_init_zero;
 
-    response.which_payload = MsgResponse_invalidRequestResponse_tag;
+    switch (request.which_payload) {
+        case MsgRequest_socketOpenRequest_tag:
+            HandleSocketOpen(request.payload.socketOpenRequest, response);
+            break;
+
+        default:
+            response.which_payload = MsgResponse_invalidRequestResponse_tag;
+            response.payload.invalidRequestResponse.tag = true;
+            break;
+    }
 
     response.id = request.id;
-    response.payload.invalidRequestResponse.tag = true;
 
     SendResponse(response, RESPONSE_STATIC_SIZE);
+}
+
+void NetworkSession::HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse& response) {
+    response.which_payload = MsgResponse_socketOpenResponse_tag;
+    auto& resp = response.payload.socketOpenResponse;
+
+    resp.handle = -1;
+    resp.err = 0;
+
+    int socketType = mapSocketType(request.type);
+    if (socketType < 0) {
+        LOG("bad socket type %i\n", request.type);
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (socketType == SOCK_RAW) {
+        LOG("TODO: RAW sockets currently unsupported\n");
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    int32_t handle = getFreeHandle();
+    if (handle < 0) {
+        LOG("not free handles left");
+        resp.err = NetworkCodes::netErrInternal;
+        return;
+    }
+
+    int fd = socket(AF_INET, socketType, 0);
+    if (fd == -1) {
+        resp.err = NetworkCodes::errnoToPalm(errno);
+        return;
+    }
+
+    sockets[handle] = {.fd = fd};
+    resp.handle = handle;
+}
+
+int32_t NetworkSession::getFreeHandle() {
+    for (size_t i = 0; i < sockets.size(); i++)
+        if (!sockets[i]) return i;
+
+    return -1;
 }
 
 void NetworkSession::SendResponse(MsgResponse& response, size_t size) {
