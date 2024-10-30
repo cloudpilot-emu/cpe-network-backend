@@ -10,6 +10,9 @@
 
 using namespace std;
 
+using SessionsT = unordered_map<uint32_t, unique_ptr<NetworkSession>>;
+using TerminatingSessionsT = unordered_set<unique_ptr<NetworkSession>>;
+
 namespace {
     void defaultResultCb(uint32_t sessiondId, const uint8_t* data, size_t len, void* context) {}
 
@@ -18,8 +21,8 @@ namespace {
 
     uint32_t nextSessionId;
 
-    unordered_map<uint32_t, unique_ptr<NetworkSession>> sessions;
-    unordered_set<unique_ptr<NetworkSession>> terminatingSessions;
+    SessionsT sessions;
+    TerminatingSessionsT terminatingSessions;
 
     void cleanupTerminatedSessions() {
         auto it = terminatingSessions.begin();
@@ -27,6 +30,15 @@ namespace {
             auto current = it++;
             if ((*current)->HasTerminated()) terminatingSessions.erase(current);
         }
+    }
+
+    void closeSession(const SessionsT::iterator& it) {
+        it->second->Terminate();
+
+        terminatingSessions.emplace(std::move(it->second));
+        sessions.erase(it);
+
+        cleanupTerminatedSessions();
     }
 }  // namespace
 
@@ -56,12 +68,7 @@ void net_closeSession(uint32_t sessionId) {
         return;
     }
 
-    it->second->Terminate();
-
-    terminatingSessions.emplace(std::move(it->second));
-    sessions.erase(it);
-
-    cleanupTerminatedSessions();
+    closeSession(it);
 }
 
 void net_closeAllSessions() {
@@ -69,7 +76,7 @@ void net_closeAllSessions() {
 
     while (it != sessions.end()) {
         auto current = it++;
-        net_closeSession(current->first);
+        closeSession(current);
     }
 }
 
