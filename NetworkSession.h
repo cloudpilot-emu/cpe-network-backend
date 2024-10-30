@@ -1,5 +1,5 @@
-#ifndef NETWORK_SESSION_H
-#define NETWORK_SESSION_H
+#ifndef _NETWORK_SESSION_H_
+#define _NETWORK_SESSION_H_
 
 #include <array>
 #include <atomic>
@@ -71,4 +71,4 @@ class NetworkSession {
     NetworkSession& operator=(NetworkSession&&) = delete;
 };
 
-#endif  // NETWORK_SESSION_H
+#endif  // _NETWORK_SESSION_H_

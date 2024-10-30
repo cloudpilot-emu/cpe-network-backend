@@ -1,5 +1,5 @@
-#ifndef __NETWORK_CODES_H__
-#define __NETWORK_CODES_H__
+#ifndef _NETWORK_CODES_H_
+#define _NETWORK_CODES_H_
 
 #include <cstdint>
 
@@ -140,4 +140,4 @@ namespace NetworkCodes {
     uint16_t errnoToPalm(int err);
 }  // namespace NetworkCodes
 
-#endif  //  __NETWORK_CODES_H_
+#endif  //  _NETWORK_CODES_H_

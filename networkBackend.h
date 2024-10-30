@@ -1,5 +1,5 @@
-#ifndef NETWORK_BACKEND_H
-#define NETWORK_BACKEND_H
+#ifndef _NETWORK_BACKEND_H_
+#define _NETWORK_BACKEND_H_
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -25,4 +25,4 @@ bool net_dispatchRpc(uint32_t sessionId, const uint8_t* data, size_t len);
 }
 #endif
 
-#endif  // NETWORK_BACKEND_H
+#endif  // _NETWORK_BACKEND_H_
