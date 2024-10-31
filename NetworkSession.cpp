@@ -1,6 +1,7 @@
 #include "NetworkSession.h"
 
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <cerrno>
 #include <cstddef>
@@ -116,6 +117,14 @@ void NetworkSession::WorkerMain() {
     }
 
     worker.detach();
+
+    for (const auto& ctx : sockets) {
+        if (!ctx) continue;
+
+        shutdown(ctx->sock, SHUT_RDWR);
+        close(ctx->sock);
+    }
+
     hasTerminated = true;
 }
 
@@ -125,6 +134,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request) {
     switch (request.which_payload) {
         case MsgRequest_socketOpenRequest_tag:
             HandleSocketOpen(request.payload.socketOpenRequest, response);
+            break;
+
+        case MsgRequest_socketCloseRequest_tag:
+            HandleSocketClose(request.payload.socketCloseRequest, response);
             break;
 
         default:
@@ -158,7 +171,7 @@ void NetworkSession::HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse
         return;
     }
 
-    int32_t handle = getFreeHandle();
+    int32_t handle = GetFreeHandle();
     if (handle < 0) {
         LOG("not free handles left");
         resp.err = NetworkCodes::netErrInternal;
@@ -171,15 +184,44 @@ void NetworkSession::HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse
         return;
     }
 
-    sockets[handle] = {.fd = fd};
+    sockets[handle] = {.sock = fd};
     resp.handle = handle;
 }
 
-int32_t NetworkSession::getFreeHandle() {
+void NetworkSession::HandleSocketClose(MsgSocketCloseRequest& request, MsgResponse& response) {
+    response.which_payload = MsgResponse_socketCloseResponse_tag;
+    auto& resp = response.payload.socketCloseResponse;
+
+    resp.err = 0;
+
+    const int sock = ResolveHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrInternal;
+        return;
+    }
+
+    sockets[request.handle] = nullopt;
+
+    shutdown(sock, SHUT_RDWR);
+    if (close(sock) == -1) {
+        resp.err = NetworkCodes::errnoToPalm(errno);
+    }
+}
+
+int32_t NetworkSession::GetFreeHandle() {
     for (size_t i = 0; i < sockets.size(); i++)
         if (!sockets[i]) return i;
 
     return -1;
+}
+
+int NetworkSession::ResolveHandle(uint32_t handle) const {
+    if (handle > MAX_HANDLE) return -1;
+
+    const auto& socketContext = sockets[handle];
+    if (!socketContext) return -1;
+
+    return socketContext->sock;
 }
 
 void NetworkSession::SendResponse(MsgResponse& response, size_t size) {

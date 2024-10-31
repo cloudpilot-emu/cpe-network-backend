@@ -35,12 +35,14 @@ class NetworkSession {
     void SendResponse(MsgResponse& response, size_t size);
 
     void HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse& response);
+    void HandleSocketClose(MsgSocketCloseRequest& request, MsgResponse& response);
 
-    int32_t getFreeHandle();
+    int32_t GetFreeHandle();
+    int ResolveHandle(uint32_t handle) const;
 
    private:
     struct SocketContext {
-        int fd;
+        int sock;
     };
 
    private:
