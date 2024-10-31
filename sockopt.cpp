@@ -33,8 +33,10 @@ namespace {
             case netSocketOptSockBroadcast:
                 return SO_BROADCAST;
 
+#ifdef SO_USELOOPBACK
             case netSocketOptSockUseLoopback:
                 return SO_USELOOPBACK;
+#endif
 
             case netSocketOptSockLinger:
                 return SO_LINGER;
