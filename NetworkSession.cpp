@@ -231,8 +231,6 @@ void NetworkSession::HandleSocketOptionSet(MsgSocketOptionSetRequest& request,
 
     resp.err = 0;
 
-    cout << request.level << " " << request.option << endl;
-
     int sock = ResolveHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
