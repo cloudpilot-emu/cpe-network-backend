@@ -1,6 +1,8 @@
 #ifndef _NETWORK_CODES_H_
 #define _NETWORK_CODES_H_
 
+#include <sys/socket.h>
+
 #include <cstdint>
 
 namespace NetworkCodes {
@@ -136,6 +138,34 @@ namespace NetworkCodes {
     constexpr uint16_t netErrScptPluginLaunchFail = netErrorClass | 129;
     constexpr uint16_t netErrScptPluginCmdFail = netErrorClass | 130;
     constexpr uint16_t netErrScptPluginInvalidCmd = netErrorClass | 131;
+
+    constexpr uint16_t netSocketOptLevelIP = 0;
+    constexpr uint16_t netSocketOptLevelTCP = 6;
+    constexpr uint16_t netSocketOptLevelSocket = 0xFFFF;
+
+    constexpr uint16_t netSocketOptIPOptions = 1;
+    constexpr uint16_t netSocketOptTCPNoDelay = 1;
+    constexpr uint16_t netSocketOptTCPMaxSeg = 2;
+    constexpr uint16_t netSocketOptSockDebug = 0x0001;
+    constexpr uint16_t netSocketOptSockAcceptConn = 0x0002;
+    constexpr uint16_t netSocketOptSockReuseAddr = 0x0004;
+    constexpr uint16_t netSocketOptSockKeepAlive = 0x0008;
+    constexpr uint16_t netSocketOptSockDontRoute = 0x0010;
+    constexpr uint16_t netSocketOptSockBroadcast = 0x0020;
+    constexpr uint16_t netSocketOptSockUseLoopback = 0x0040;
+    constexpr uint16_t netSocketOptSockLinger = 0x0080;
+    constexpr uint16_t netSocketOptSockOOBInLine = 0x0100;
+    constexpr uint16_t netSocketOptSockSndBufSize = 0x1001;
+    constexpr uint16_t netSocketOptSockRcvBufSize = 0x1002;
+    constexpr uint16_t netSocketOptSockSndLowWater = 0x1003;
+    constexpr uint16_t netSocketOptSockRcvLowWater = 0x1004;
+    constexpr uint16_t netSocketOptSockSndTimeout = 0x1005;
+    constexpr uint16_t netSocketOptSockRcvTimeout = 0x1006;
+    constexpr uint16_t netSocketOptSockErrorStatus = 0x1007;
+    constexpr uint16_t netSocketOptSockSocketType = 0x1008;
+    constexpr uint16_t netSocketOptSockNonBlocking = 0x2000;
+    constexpr uint16_t netSocketOptSockRequireErrClear = 0x2001;
+    constexpr uint16_t netSocketOptSockMultiPktAddr = 0x2002;
 
     uint16_t errnoToPalm(int err);
 }  // namespace NetworkCodes

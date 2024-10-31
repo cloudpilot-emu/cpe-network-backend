@@ -1,5 +1,6 @@
 #include "NetworkSession.h"
 
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -12,6 +13,7 @@
 #include "codes.h"
 #include "pb_decode.h"
 #include "pb_encode.h"
+#include "sockopt.h"
 
 using namespace std;
 
@@ -28,6 +30,16 @@ namespace {
     constexpr size_t INITIAL_SIZE_RESPONSE = 1024;
 
     constexpr size_t RESPONSE_STATIC_SIZE = 128;
+
+    template <typename F, typename... Ts>
+    int withRetry(F fn, Ts... args) {
+        int result;
+        do {
+            result = fn(args...);
+        } while (result == 1 && errno == EINTR);
+
+        return result;
+    }
 
     int mapSocketType(uint32_t palmType) {
         switch (palmType) {
@@ -121,8 +133,8 @@ void NetworkSession::WorkerMain() {
     for (const auto& ctx : sockets) {
         if (!ctx) continue;
 
-        shutdown(ctx->sock, SHUT_RDWR);
-        close(ctx->sock);
+        withRetry(shutdown, ctx->sock, SHUT_RDWR);
+        withRetry(close, ctx->sock);
     }
 
     hasTerminated = true;
@@ -138,6 +150,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request) {
 
         case MsgRequest_socketCloseRequest_tag:
             HandleSocketClose(request.payload.socketCloseRequest, response);
+            break;
+
+        case MsgRequest_socketOptionSetRequest_tag:
+            HandleSocketOptionSet(request.payload.socketOptionSetRequest, response);
             break;
 
         default:
@@ -178,7 +194,7 @@ void NetworkSession::HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse
         return;
     }
 
-    int fd = socket(AF_INET, socketType, 0);
+    int fd = withRetry(socket, AF_INET, socketType, 0);
     if (fd == -1) {
         resp.err = NetworkCodes::errnoToPalm(errno);
         return;
@@ -202,8 +218,56 @@ void NetworkSession::HandleSocketClose(MsgSocketCloseRequest& request, MsgRespon
 
     sockets[request.handle] = nullopt;
 
-    shutdown(sock, SHUT_RDWR);
-    if (close(sock) == -1) {
+    withRetry(shutdown, sock, SHUT_RDWR);
+    if (withRetry(close, sock) == -1) {
+        resp.err = NetworkCodes::errnoToPalm(errno);
+    }
+}
+
+void NetworkSession::HandleSocketOptionSet(MsgSocketOptionSetRequest& request,
+                                           MsgResponse& response) {
+    response.which_payload = MsgResponse_socketOptionSetResponse_tag;
+    auto& resp = response.payload.socketOptionSetResponse;
+
+    resp.err = 0;
+
+    cout << request.level << " " << request.option << endl;
+
+    int sock = ResolveHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (request.level == NetworkCodes::netSocketOptLevelSocket &&
+        request.option == NetworkCodes::netSocketOptSockNonBlocking) {
+        if (request.which_value != MsgSocketOptionSetRequest_intval_tag) {
+            resp.err = NetworkCodes::netErrParamErr;
+            return;
+        }
+
+        int flags = withRetry(fcntl, sock, F_GETFL);
+
+        if (request.value.intval)
+            flags |= O_NONBLOCK;
+        else
+            flags &= ~O_NONBLOCK;
+
+        if (withRetry(fcntl, sock, F_SETFL, flags) == -1) {
+            resp.err = NetworkCodes::errnoToPalm(errno);
+        }
+
+        return;
+    }
+
+    NetworkSockopt::SockoptParameters parameters;
+    if (!NetworkSockopt::translateSetSockoptParameters(request, parameters)) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (withRetry(setsockopt, sock, parameters.level, parameters.name, &parameters.payload,
+                  parameters.len)) {
         resp.err = NetworkCodes::errnoToPalm(errno);
     }
 }

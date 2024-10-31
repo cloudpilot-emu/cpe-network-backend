@@ -36,6 +36,7 @@ class NetworkSession {
 
     void HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse& response);
     void HandleSocketClose(MsgSocketCloseRequest& request, MsgResponse& response);
+    void HandleSocketOptionSet(MsgSocketOptionSetRequest& request, MsgResponse& response);
 
     int32_t GetFreeHandle();
     int ResolveHandle(uint32_t handle) const;
