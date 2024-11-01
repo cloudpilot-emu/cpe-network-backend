@@ -223,6 +223,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request) {
             HandleSocketConnect(request.payload.socketConnectRequest, response);
             break;
 
+        case MsgRequest_selectRequest_tag:
+            HandleSelect(request.payload.selectRequest, response);
+            break;
+
         default:
             response.which_payload = MsgResponse_invalidRequestResponse_tag;
             response.payload.invalidRequestResponse.tag = true;
@@ -443,8 +447,54 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
             break;
     }
 
-    if (fds[0].revents & (POLLERR | POLLHUP)) {
+    if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
         resp.err = getSocketError(sock);
+    }
+}
+
+void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& response) {
+    response.which_payload = MsgResponse_selectResponse_tag;
+    auto& resp = response.payload.selectResponse;
+
+    resp.err = 0;
+    resp.exceptFDs = 0;
+    resp.readFDs = 0;
+    resp.writeFDs = 0;
+
+    const uint32_t fdmask = (request.readFDs | request.writeFDs | request.exceptFDs) &
+                            (request.width > 31 ? ~0 : (1 << request.width) - 1);
+    const size_t fdcnt = __builtin_popcount(fdmask);
+
+    pollfd fds[fdcnt];
+
+    int fd = 0;
+    for (size_t i = 0; i < min(request.width, static_cast<uint32_t>(32)); i++) {
+        const uint32_t mask = static_cast<uint32_t>(1) << i;
+        if ((fdmask & mask) == 0) continue;
+
+        fds[fd] = {.fd = fd, .events = 0, .revents = 0};
+        if (mask & request.readFDs) fds[fd].events |= POLLRDNORM;
+        if (mask & request.writeFDs) fds[fd].events |= POLLWRNORM;
+        if (mask & request.exceptFDs) fds[fd].events |= (POLLERR | POLLHUP);
+    }
+
+    switch (withRetry(poll, fds, fdcnt, normalizeTimeout(request.timeout))) {
+        case 0:
+            resp.err = NetworkCodes::netErrTimeout;
+            return;
+
+        case -1:
+            resp.err = NetworkCodes::errnoToPalm(errno);
+            return;
+
+        default:
+            break;
+    }
+
+    for (size_t i = 0; i < fdcnt; i++) {
+        if (fds[i].revents & POLLRDNORM) resp.readFDs |= (1 << i);
+        if (fds[i].revents & POLLWRNORM) resp.writeFDs |= (1 << i);
+        if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) resp.exceptFDs |= (1 << i);
     }
 }
 
