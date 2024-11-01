@@ -467,15 +467,18 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
 
     pollfd fds[fdcnt];
 
-    int fd = 0;
+    int handle = 0;
     for (size_t i = 0; i < min(request.width, static_cast<uint32_t>(32)); i++) {
         const uint32_t mask = static_cast<uint32_t>(1) << i;
         if ((fdmask & mask) == 0) continue;
 
-        fds[fd] = {.fd = fd, .events = 0, .revents = 0};
-        if (mask & request.readFDs) fds[fd].events |= POLLRDNORM;
-        if (mask & request.writeFDs) fds[fd].events |= POLLWRNORM;
-        if (mask & request.exceptFDs) fds[fd].events |= (POLLERR | POLLHUP);
+        const int fd = ResolveHandle(handle);
+        if (fd == -1) continue;
+
+        fds[handle] = {.fd = fd, .events = 0, .revents = 0};
+        if (mask & request.readFDs) fds[handle].events |= POLLRDNORM;
+        if (mask & request.writeFDs) fds[handle].events |= POLLWRNORM;
+        if (mask & request.exceptFDs) fds[handle].events |= (POLLERR | POLLHUP);
     }
 
     switch (withRetry(poll, fds, fdcnt, normalizeTimeout(request.timeout))) {
