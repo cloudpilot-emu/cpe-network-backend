@@ -493,8 +493,6 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
             break;
     }
 
-    cout << fdcnt << endl;
-
     for (uint32_t i = 0; i < fdcnt; i++) {
         const auto handle = ResolveSock(fds[i].fd);
         if (!handle) {
