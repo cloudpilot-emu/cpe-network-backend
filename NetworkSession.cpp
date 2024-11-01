@@ -67,6 +67,13 @@ namespace {
 
         return true;
     }
+
+    void decodeSockaddr(Address& addr, sockaddr_in& saddr) {
+        saddr.sin_family = AF_INET;
+        saddr.sin_len = sizeof(sockaddr_in);
+        saddr.sin_addr.s_addr = htonl(addr.ip);
+        saddr.sin_port = htons(addr.port);
+    }
 }  // namespace
 
 NetworkSession::NetworkSession(RpcResultCb resultCb)
@@ -169,6 +176,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request) {
 
         case MsgRequest_socketAddrRequest_tag:
             HandleSocketAddr(request.payload.socketAddrRequest, response);
+            break;
+
+        case MsgRequest_socketBindRequest_tag:
+            HandleSocketBind(request.payload.socketBindRequest, response);
             break;
 
         default:
@@ -329,6 +340,25 @@ void NetworkSession::HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse
         }
 
         resp.has_addressRemote = true;
+    }
+}
+
+void NetworkSession::HandleSocketBind(MsgSocketBindRequest& request, MsgResponse& response) {
+    response.which_payload = MsgResponse_socketBindResponse_tag;
+    auto& resp = response.payload.socketBindResponse;
+
+    resp.err = 0;
+
+    int sock = ResolveHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrParamErr;
+    }
+
+    sockaddr_in saddr;
+    decodeSockaddr(request.address, saddr);
+
+    if (withRetry(::bind, sock, reinterpret_cast<sockaddr*>(&saddr), sizeof(saddr)) == -1) {
+        resp.err = NetworkCodes::errnoToPalm(errno);
     }
 }
 

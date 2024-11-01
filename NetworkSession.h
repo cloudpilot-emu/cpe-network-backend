@@ -38,6 +38,7 @@ class NetworkSession {
     void HandleSocketClose(MsgSocketCloseRequest& request, MsgResponse& response);
     void HandleSocketOptionSet(MsgSocketOptionSetRequest& request, MsgResponse& response);
     void HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse& response);
+    void HandleSocketBind(MsgSocketBindRequest& request, MsgResponse& response);
 
     int32_t GetFreeHandle();
     int ResolveHandle(uint32_t handle) const;
