@@ -36,7 +36,7 @@ namespace {
         int result;
         do {
             result = fn(args...);
-        } while (result == 1 && errno == EINTR);
+        } while (result == -1 && errno == EINTR);
 
         return result;
     }
