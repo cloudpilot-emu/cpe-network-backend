@@ -1,6 +1,7 @@
 #include "NetworkSession.h"
 
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -55,6 +56,16 @@ namespace {
             default:
                 return -1;
         }
+    }
+
+    bool encodeSockaddr(const sockaddr* saddr, Address& addr, socklen_t len) {
+        if (saddr->sa_family != AF_INET || len < sizeof(sockaddr_in)) return false;
+        const auto saddr4 = reinterpret_cast<const sockaddr_in*>(saddr);
+
+        addr.ip = ntohl(saddr4->sin_addr.s_addr);
+        addr.port = ntohs(saddr4->sin_port);
+
+        return true;
     }
 }  // namespace
 
@@ -156,6 +167,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request) {
             HandleSocketOptionSet(request.payload.socketOptionSetRequest, response);
             break;
 
+        case MsgRequest_socketAddrRequest_tag:
+            HandleSocketAddr(request.payload.socketAddrRequest, response);
+            break;
+
         default:
             response.which_payload = MsgResponse_invalidRequestResponse_tag;
             response.payload.invalidRequestResponse.tag = true;
@@ -231,7 +246,7 @@ void NetworkSession::HandleSocketOptionSet(MsgSocketOptionSetRequest& request,
 
     resp.err = 0;
 
-    int sock = ResolveHandle(request.handle);
+    const int sock = ResolveHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
@@ -267,6 +282,53 @@ void NetworkSession::HandleSocketOptionSet(MsgSocketOptionSetRequest& request,
     if (withRetry(setsockopt, sock, parameters.level, parameters.name, &parameters.payload,
                   parameters.len)) {
         resp.err = NetworkCodes::errnoToPalm(errno);
+    }
+}
+
+void NetworkSession::HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse& response) {
+    response.which_payload = MsgResponse_socketAddrResponse_tag;
+    auto& resp = response.payload.socketAddrResponse;
+
+    resp.err = 0;
+
+    const int sock = ResolveHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (request.requestAddressLocal) {
+        sockaddr addr;
+        socklen_t addrLen = sizeof(addr);
+
+        if (withRetry(getsockname, sock, &addr, &addrLen) == -1) {
+            resp.err = NetworkCodes::errnoToPalm(errno);
+            return;
+        }
+
+        if (!encodeSockaddr(&addr, resp.addressLocal, addrLen)) {
+            resp.err = NetworkCodes::netErrInternal;
+            return;
+        }
+
+        resp.has_addressLocal = true;
+    }
+
+    if (request.requestAddressRemote) {
+        sockaddr addr;
+        socklen_t addrLen = sizeof(addr);
+
+        if (withRetry(getpeername, sock, &addr, &addrLen) == -1) {
+            resp.err = NetworkCodes::errnoToPalm(errno);
+            return;
+        }
+
+        if (!encodeSockaddr(&addr, resp.addressRemote, addrLen)) {
+            resp.err = NetworkCodes::netErrInternal;
+            return;
+        }
+
+        resp.has_addressRemote = true;
     }
 }
 
