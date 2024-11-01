@@ -461,24 +461,23 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
     resp.readFDs = 0;
     resp.writeFDs = 0;
 
-    const uint32_t fdmask = (request.readFDs | request.writeFDs | request.exceptFDs) &
-                            (request.width > 31 ? ~0 : (1 << request.width) - 1);
-    const size_t fdcnt = __builtin_popcount(fdmask);
+    const uint32_t fdmask = (request.readFDs | request.writeFDs | request.exceptFDs);
+    pollfd fds[32];
 
-    pollfd fds[fdcnt];
-
-    int handle = 0;
-    for (size_t i = 0; i < min(request.width, static_cast<uint32_t>(32)); i++) {
-        const uint32_t mask = static_cast<uint32_t>(1) << i;
+    uint32_t fdcnt = 0;
+    for (uint32_t handle = 0; handle < min(request.width, static_cast<uint32_t>(32)); handle++) {
+        const uint32_t mask = static_cast<uint32_t>(1) << handle;
         if ((fdmask & mask) == 0) continue;
 
         const int fd = ResolveHandle(handle);
         if (fd == -1) continue;
 
-        fds[handle] = {.fd = fd, .events = 0, .revents = 0};
-        if (mask & request.readFDs) fds[handle].events |= POLLRDNORM;
-        if (mask & request.writeFDs) fds[handle].events |= POLLWRNORM;
-        if (mask & request.exceptFDs) fds[handle].events |= (POLLERR | POLLHUP);
+        fds[fdcnt] = {.fd = fd, .events = 0, .revents = 0};
+        if (mask & request.readFDs) fds[fdcnt].events |= POLLRDNORM;
+        if (mask & request.writeFDs) fds[fdcnt].events |= POLLWRNORM;
+        if (mask & request.exceptFDs) fds[fdcnt].events |= (POLLERR | POLLHUP);
+
+        fdcnt++;
     }
 
     switch (withRetry(poll, fds, fdcnt, normalizeTimeout(request.timeout))) {
@@ -494,10 +493,18 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
             break;
     }
 
-    for (size_t i = 0; i < fdcnt; i++) {
-        if (fds[i].revents & POLLRDNORM) resp.readFDs |= (1 << i);
-        if (fds[i].revents & POLLWRNORM) resp.writeFDs |= (1 << i);
-        if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) resp.exceptFDs |= (1 << i);
+    cout << fdcnt << endl;
+
+    for (uint32_t i = 0; i < fdcnt; i++) {
+        const auto handle = ResolveSock(fds[i].fd);
+        if (!handle) {
+            cerr << "BUG: unable to resolve socket to handle!" << endl;
+            continue;
+        }
+
+        if (fds[i].revents & POLLRDNORM) resp.readFDs |= (1 << *handle);
+        if (fds[i].revents & POLLWRNORM) resp.writeFDs |= (1 << *handle);
+        if (fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) resp.exceptFDs |= (1 << *handle);
     }
 }
 
@@ -515,6 +522,13 @@ int NetworkSession::ResolveHandle(uint32_t handle) const {
     if (!socketContext) return -1;
 
     return socketContext->sock;
+}
+
+std::optional<uint32_t> NetworkSession::ResolveSock(int sock) const {
+    for (uint32_t handle = 0; handle <= MAX_HANDLE; handle++)
+        if (sockets[handle] && sockets[handle]->sock == sock) return handle;
+
+    return nullopt;
 }
 
 NetworkSession::SocketContext::SocketContext(int sock) : sock(sock) {}

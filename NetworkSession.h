@@ -44,6 +44,7 @@ class NetworkSession {
 
     int32_t GetFreeHandle();
     int ResolveHandle(uint32_t handle) const;
+    std::optional<uint32_t> ResolveSock(int sock) const;
 
    private:
     struct SocketContext {
