@@ -39,13 +39,17 @@ class NetworkSession {
     void HandleSocketOptionSet(MsgSocketOptionSetRequest& request, MsgResponse& response);
     void HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse& response);
     void HandleSocketBind(MsgSocketBindRequest& request, MsgResponse& response);
+    void HandleSocketConnect(MsgSocketConnectRequest& request, MsgResponse& response);
 
     int32_t GetFreeHandle();
     int ResolveHandle(uint32_t handle) const;
 
    private:
     struct SocketContext {
-        int sock;
+        explicit SocketContext(int sock);
+
+        int sock{-1};
+        bool blocking{true};
     };
 
    private:

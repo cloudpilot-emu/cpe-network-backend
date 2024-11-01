@@ -2,6 +2,8 @@
 
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
+#include <sys/param.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -26,11 +28,17 @@ using namespace std;
     #define LOG(...)
 #endif
 
+#if defined(BSD) || defined(__BSD__)
+    #define HAVE_SIN_LEN
+#endif
+
 namespace {
     constexpr size_t INITIAL_SIZE_REQUEST = 1024;
     constexpr size_t INITIAL_SIZE_RESPONSE = 1024;
 
     constexpr size_t RESPONSE_STATIC_SIZE = 128;
+
+    constexpr uint32_t MAX_TIMEOUT = 10000;
 
     template <typename F, typename... Ts>
     int withRetry(F fn, Ts... args) {
@@ -59,7 +67,7 @@ namespace {
     }
 
     bool encodeSockaddr(const sockaddr* saddr, Address& addr, socklen_t len) {
-        if (saddr->sa_family != AF_INET || len < sizeof(sockaddr_in)) return false;
+        if (len < sizeof(sockaddr_in) || saddr->sa_family != AF_INET) return false;
         const auto saddr4 = reinterpret_cast<const sockaddr_in*>(saddr);
 
         addr.ip = ntohl(saddr4->sin_addr.s_addr);
@@ -70,9 +78,38 @@ namespace {
 
     void decodeSockaddr(Address& addr, sockaddr_in& saddr) {
         saddr.sin_family = AF_INET;
-        saddr.sin_len = sizeof(sockaddr_in);
         saddr.sin_addr.s_addr = htonl(addr.ip);
         saddr.sin_port = htons(addr.port);
+
+#ifdef HAVE_SIN_LEN
+        saddr.sin_len = sizeof(sockaddr_in);
+#endif
+    }
+
+    bool setNonBlocking(int sock) {
+        int flags = withRetry(fcntl, sock, F_GETFL);
+        if (flags == -1) return false;
+
+        flags |= O_NONBLOCK;
+
+        return withRetry(fcntl, sock, F_SETFL, flags) != -1;
+    }
+
+    uint16_t getSocketError(int sock) {
+        int err;
+        socklen_t len = sizeof(err);
+
+        if (withRetry(getsockopt, sock, SOL_SOCKET, SO_ERROR, &err, &len) == -1) {
+            cerr << "unable to retrieve socket error: " << errno << endl;
+
+            return NetworkCodes::netErrInternal;
+        }
+
+        return NetworkCodes::errnoToPalm(err);
+    }
+
+    uint32_t normalizeTimeout(int timeout) {
+        return timeout < 0 ? MAX_TIMEOUT : min(static_cast<uint32_t>(timeout), MAX_TIMEOUT);
     }
 }  // namespace
 
@@ -182,6 +219,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request) {
             HandleSocketBind(request.payload.socketBindRequest, response);
             break;
 
+        case MsgRequest_socketConnectRequest_tag:
+            HandleSocketConnect(request.payload.socketConnectRequest, response);
+            break;
+
         default:
             response.which_payload = MsgResponse_invalidRequestResponse_tag;
             response.payload.invalidRequestResponse.tag = true;
@@ -220,13 +261,21 @@ void NetworkSession::HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse
         return;
     }
 
-    int fd = withRetry(socket, AF_INET, socketType, 0);
-    if (fd == -1) {
+    int sock = withRetry(socket, AF_INET, socketType, 0);
+    if (sock == -1) {
         resp.err = NetworkCodes::errnoToPalm(errno);
         return;
     }
 
-    sockets[handle] = {.sock = fd};
+    if (!setNonBlocking(sock)) {
+        cerr << "failed to set socket non-blocking: " << errno << endl;
+        close(sock);
+
+        resp.err = NetworkCodes::netErrInternal;
+        return;
+    }
+
+    sockets[handle] = SocketContext(sock);
     resp.handle = handle;
 }
 
@@ -270,16 +319,7 @@ void NetworkSession::HandleSocketOptionSet(MsgSocketOptionSetRequest& request,
             return;
         }
 
-        int flags = withRetry(fcntl, sock, F_GETFL);
-
-        if (request.value.intval)
-            flags |= O_NONBLOCK;
-        else
-            flags &= ~O_NONBLOCK;
-
-        if (withRetry(fcntl, sock, F_SETFL, flags) == -1) {
-            resp.err = NetworkCodes::errnoToPalm(errno);
-        }
+        sockets[request.handle]->blocking = !request.value.intval;
 
         return;
     }
@@ -349,9 +389,10 @@ void NetworkSession::HandleSocketBind(MsgSocketBindRequest& request, MsgResponse
 
     resp.err = 0;
 
-    int sock = ResolveHandle(request.handle);
+    const int sock = ResolveHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
+        return;
     }
 
     sockaddr_in saddr;
@@ -359,6 +400,51 @@ void NetworkSession::HandleSocketBind(MsgSocketBindRequest& request, MsgResponse
 
     if (withRetry(::bind, sock, reinterpret_cast<sockaddr*>(&saddr), sizeof(saddr)) == -1) {
         resp.err = NetworkCodes::errnoToPalm(errno);
+    }
+}
+
+void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgResponse& response) {
+    response.which_payload = MsgResponse_socketConnectResponse_tag;
+    auto& resp = response.payload.socketConnectResponse;
+
+    resp.err = 0;
+
+    const int sock = ResolveHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    const SocketContext& ctx = *sockets[request.handle];
+    sockaddr_in saddr;
+    decodeSockaddr(request.address, saddr);
+
+    if (withRetry(connect, sock, reinterpret_cast<sockaddr*>(&saddr), sizeof(saddr)) == 0) return;
+
+    if (errno != EINPROGRESS || ctx.blocking) {
+        resp.err = NetworkCodes::errnoToPalm(errno);
+        return;
+    }
+
+    pollfd fds[] = {
+        {.fd = sock, .events = POLLERR | POLLHUP | POLLRDNORM | POLLWRNORM, .revents = 0}};
+
+    switch (withRetry(poll, fds, 1, normalizeTimeout(request.timeout))) {
+        case -1:
+            cerr << "poll failed: " << errno << endl;
+            resp.err = NetworkCodes::netErrInternal;
+            return;
+
+        case 0:
+            resp.err = NetworkCodes::netErrTimeout;
+            return;
+
+        default:
+            break;
+    }
+
+    if (fds[0].revents & (POLLERR | POLLHUP)) {
+        resp.err = getSocketError(sock);
     }
 }
 
@@ -377,6 +463,8 @@ int NetworkSession::ResolveHandle(uint32_t handle) const {
 
     return socketContext->sock;
 }
+
+NetworkSession::SocketContext::SocketContext(int sock) : sock(sock) {}
 
 void NetworkSession::SendResponse(MsgResponse& response, size_t size) {
     if (rpcResponse.size() < size) rpcResponse.resize(size);
