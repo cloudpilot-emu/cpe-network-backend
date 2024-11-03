@@ -29,9 +29,22 @@ class NetworkSession {
     bool HasTerminated();
 
    private:
+    struct SocketContext {
+        explicit SocketContext(int sock);
+
+        int sock{-1};
+        bool blocking{true};
+    };
+
+    struct Buffer {
+        size_t size{0};
+        std::unique_ptr<uint8_t[]> data;
+    };
+
+   private:
     void WorkerMain();
 
-    void HandleRpcRequest(MsgRequest& request);
+    void HandleRpcRequest(MsgRequest& request, const Buffer& payloadBuffer);
     void SendResponse(MsgResponse& response, size_t size);
 
     void HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse& response);
@@ -41,18 +54,15 @@ class NetworkSession {
     void HandleSocketBind(MsgSocketBindRequest& request, MsgResponse& response);
     void HandleSocketConnect(MsgSocketConnectRequest& request, MsgResponse& response);
     void HandleSelect(MsgSelectRequest& request, MsgResponse& response);
+    void HandleSocketSend(MsgSocketSendRequest& request, const Buffer& sendPayload,
+                          MsgResponse& response);
 
     int32_t GetFreeHandle();
     int ResolveHandle(uint32_t handle) const;
     std::optional<uint32_t> ResolveSock(int sock) const;
 
-   private:
-    struct SocketContext {
-        explicit SocketContext(int sock);
-
-        int sock{-1};
-        bool blocking{true};
-    };
+    static bool bufferDecodeCb(pb_istream_t* stream, const pb_field_iter_t* field, void** arg);
+    static bool payloadDecodeCb(pb_istream_t* stream, const pb_field_iter_t* field, void** arg);
 
    private:
     static constexpr size_t MAX_HANDLE = 31;

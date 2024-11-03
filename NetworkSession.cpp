@@ -8,15 +8,22 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <memory>
 
 #include "codes.h"
 #include "pb_decode.h"
 #include "pb_encode.h"
 #include "sockopt.h"
+
+// TODO
+//
+// * Support ICMP / ICMP over raw socket
+// * Test blocking code paths for connect, send
 
 using namespace std;
 
@@ -111,6 +118,22 @@ namespace {
     uint32_t normalizeTimeout(int timeout) {
         return timeout < 0 ? MAX_TIMEOUT : min(static_cast<uint32_t>(timeout), MAX_TIMEOUT);
     }
+
+    int64_t timestampMsec() {
+        return chrono::duration_cast<chrono::milliseconds>(
+                   chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
+
+    int translateIOFlags(uint16_t flags) {
+        int ioflags = 0;
+
+        if (flags & 0x01) ioflags |= MSG_OOB;
+        if (flags & 0x02) ioflags |= MSG_PEEK;
+        if (flags & 0x04) ioflags |= MSG_DONTROUTE;
+
+        return ioflags;
+    }
 }  // namespace
 
 NetworkSession::NetworkSession(RpcResultCb resultCb)
@@ -166,7 +189,6 @@ void NetworkSession::WorkerMain() {
         {
             unique_lock<mutex> lock(dispatchMutex);
 
-            rpcRequestPending = false;
             while (!rpcRequestPending && !terminateRequested) dispatchCv.wait(lock);
 
             if (terminateRequested) break;
@@ -175,12 +197,16 @@ void NetworkSession::WorkerMain() {
         pb_istream_t stream = pb_istream_from_buffer(rpcRequest.data(), rpcRequestSize);
         MsgRequest request;
 
+        Buffer payloadBuffer;
+        request.cb_payload.arg = &payloadBuffer;
+        request.cb_payload.funcs.decode = payloadDecodeCb;
+
         if (!pb_decode(&stream, MsgRequest_fields, &request)) {
             cerr << "failed to decode RPC request" << endl;
             request.id = ~0;
         }
 
-        HandleRpcRequest(request);
+        HandleRpcRequest(request, payloadBuffer);
     }
 
     worker.detach();
@@ -195,7 +221,7 @@ void NetworkSession::WorkerMain() {
     hasTerminated = true;
 }
 
-void NetworkSession::HandleRpcRequest(MsgRequest& request) {
+void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payloadBuffer) {
     MsgResponse response = MsgResponse_init_zero;
 
     switch (request.which_payload) {
@@ -225,6 +251,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request) {
 
         case MsgRequest_selectRequest_tag:
             HandleSelect(request.payload.selectRequest, response);
+            break;
+
+        case MsgRequest_socketSendRequest_tag:
+            HandleSocketSend(request.payload.socketSendRequest, payloadBuffer, response);
             break;
 
         default:
@@ -425,7 +455,7 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
 
     if (withRetry(connect, sock, reinterpret_cast<sockaddr*>(&saddr), sizeof(saddr)) == 0) return;
 
-    if (errno != EINPROGRESS || ctx.blocking) {
+    if ((errno != EINPROGRESS && errno != EALREADY) || !ctx.blocking) {
         resp.err = NetworkCodes::errnoToPalm(errno);
         return;
     }
@@ -435,7 +465,7 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
 
     switch (withRetry(poll, fds, 1, normalizeTimeout(request.timeout))) {
         case -1:
-            cerr << "poll failed: " << errno << endl;
+            cerr << "poll failed during connect: " << errno << endl;
             resp.err = NetworkCodes::netErrInternal;
             return;
 
@@ -506,6 +536,78 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
     }
 }
 
+void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffer& sendPayload,
+                                      MsgResponse& response) {
+    response.which_payload = MsgResponse_socketSendResponse_tag;
+    auto& resp = response.payload.socketSendResponse;
+
+    resp.bytesSent = 0;
+    resp.err = 0;
+
+    const int sock = ResolveHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (sendPayload.size == 0) return;
+
+    const SocketContext& ctx = *sockets[request.handle];
+    const int32_t timeout = normalizeTimeout(request.timeout);
+    const int flags = translateIOFlags(request.flags) & ~MSG_PEEK;
+
+    sockaddr_in saddr;
+    if (request.has_address) decodeSockaddr(request.address, saddr);
+
+    int64_t timestampStart = timestampMsec();
+
+    while (true) {
+        const void* sendBuf = sendPayload.data.get() + resp.bytesSent;
+        const size_t sendSize = sendPayload.size - resp.bytesSent;
+
+        const ssize_t sendResult =
+            request.has_address ? withRetry(sendto, sock, sendBuf, sendSize, flags,
+                                            reinterpret_cast<sockaddr*>(&saddr), sizeof(saddr))
+                                : withRetry(send, sock, sendBuf, sendSize, flags);
+
+        if (sendResult != -1) {
+            resp.bytesSent += sendResult;
+        } else if (errno != EAGAIN || !ctx.blocking) {
+            resp.err = NetworkCodes::errnoToPalm(errno);
+            return;
+        }
+
+        if (!ctx.blocking) return;
+
+        const int64_t now = timestampMsec();
+        if (now - timestampStart >= timeout ||
+            resp.bytesSent >= static_cast<int32_t>(sendPayload.size))
+            return;
+
+        pollfd fds[] = {{.fd = sock, .events = 0, .revents = 0}};
+        fds[0].events = POLLERR | POLLHUP | ((flags & MSG_OOB) ? POLLWRBAND : POLLWRNORM);
+
+        switch (withRetry(poll, fds, 1, timeout - (now - timestampStart))) {
+            case -1:
+                cerr << "poll failed during send: " << errno << endl;
+                resp.err = NetworkCodes::netErrInternal;
+                return;
+
+            case 0:
+                if (resp.bytesSent == 0) resp.err = NetworkCodes::netErrTimeout;
+                return;
+
+            default:
+                break;
+        }
+
+        if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            resp.err = getSocketError(sock);
+            return;
+        }
+    }
+}
+
 int32_t NetworkSession::GetFreeHandle() {
     for (size_t i = 0; i < sockets.size(); i++)
         if (!sockets[i]) return i;
@@ -537,5 +639,34 @@ void NetworkSession::SendResponse(MsgResponse& response, size_t size) {
 
     pb_encode(&stream, MsgResponse_fields, &response);
 
+    {
+        unique_lock<mutex> lock(dispatchMutex);
+        rpcRequestPending = false;
+    }
+
     resultCb(rpcResponse.data(), stream.bytes_written);
+}
+
+bool NetworkSession::bufferDecodeCb(pb_istream_t* stream, const pb_field_iter_t* field,
+                                    void** arg) {
+    if (!arg) return false;
+    auto buffer = reinterpret_cast<Buffer*>(*arg);
+
+    buffer->size = stream->bytes_left;
+    buffer->data = make_unique<uint8_t[]>(buffer->size);
+
+    return pb_read(stream, buffer->data.get(), buffer->size);
+}
+
+bool NetworkSession::payloadDecodeCb(pb_istream_t* stream, const pb_field_iter_t* field,
+                                     void** arg) {
+    if (!arg) return false;
+    if (field->tag != MsgRequest_socketSendRequest_tag) return true;
+
+    auto request = reinterpret_cast<MsgSocketSendRequest*>(field->pData);
+
+    request->data.arg = *arg;
+    request->data.funcs.decode = bufferDecodeCb;
+
+    return true;
 }

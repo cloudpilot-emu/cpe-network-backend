@@ -1,6 +1,9 @@
 #include "codes.h"
 
 #include <cerrno>
+#include <iostream>
+
+using namespace std;
 
 uint16_t NetworkCodes::errnoToPalm(int err) {
     if (err == EWOULDBLOCK) return netErrWouldBlock;
@@ -105,7 +108,11 @@ uint16_t NetworkCodes::errnoToPalm(int err) {
         case EHOSTUNREACH:
             return netErrIPNoRoute;
 
+        case EPIPE:
+            return netErrSocketClosedByRemote;
+
         default:
+            cerr << "unhandled errno " << err << " mapped to netErrInternal" << endl;
             return netErrInternal;
     }
 }
