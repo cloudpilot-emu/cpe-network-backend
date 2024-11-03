@@ -675,6 +675,7 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
                 resp.err = NetworkCodes::netErrInternal;
                 goto receive_finalize_response;
 
+            case 0:
                 if (receivePayload->size == 0) resp.err = NetworkCodes::netErrTimeout;
                 goto receive_finalize_response;
 
