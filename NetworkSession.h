@@ -56,11 +56,15 @@ class NetworkSession {
     void HandleSelect(MsgSelectRequest& request, MsgResponse& response);
     void HandleSocketSend(MsgSocketSendRequest& request, const Buffer& sendPayload,
                           MsgResponse& response);
+    void HandleSocketReceive(MsgSocketReceiveRequest& request, Buffer* receivePayload,
+                             MsgResponse& response);
 
     int32_t GetFreeHandle();
     int ResolveHandle(uint32_t handle) const;
     std::optional<uint32_t> ResolveSock(int sock) const;
 
+    static bool bufferEncodeCb(pb_ostream_t* stream, const pb_field_iter_t* field,
+                               void* const* arg);
     static bool bufferDecodeCb(pb_istream_t* stream, const pb_field_iter_t* field, void** arg);
     static bool payloadDecodeCb(pb_istream_t* stream, const pb_field_iter_t* field, void** arg);
 

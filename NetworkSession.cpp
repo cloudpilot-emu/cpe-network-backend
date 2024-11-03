@@ -42,10 +42,9 @@ using namespace std;
 namespace {
     constexpr size_t INITIAL_SIZE_REQUEST = 1024;
     constexpr size_t INITIAL_SIZE_RESPONSE = 1024;
-
     constexpr size_t RESPONSE_STATIC_SIZE = 128;
-
     constexpr uint32_t MAX_TIMEOUT = 10000;
+    constexpr uint32_t MAX_RECEIVE_LEN = 0xffff;
 
     template <typename F, typename... Ts>
     int withRetry(F fn, Ts... args) {
@@ -223,6 +222,7 @@ void NetworkSession::WorkerMain() {
 
 void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payloadBuffer) {
     MsgResponse response = MsgResponse_init_zero;
+    Buffer responseBuffer;
 
     switch (request.which_payload) {
         case MsgRequest_socketOpenRequest_tag:
@@ -255,6 +255,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payload
 
         case MsgRequest_socketSendRequest_tag:
             HandleSocketSend(request.payload.socketSendRequest, payloadBuffer, response);
+            break;
+
+        case MsgRequest_socketReceiveRequest_tag:
+            HandleSocketReceive(request.payload.socketReceiveRequest, &responseBuffer, response);
             break;
 
         default:
@@ -581,8 +585,9 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
 
         const int64_t now = timestampMsec();
         if (now - timestampStart >= timeout ||
-            resp.bytesSent >= static_cast<int32_t>(sendPayload.size))
+            resp.bytesSent >= static_cast<int32_t>(sendPayload.size)) {
             return;
+        }
 
         pollfd fds[] = {{.fd = sock, .events = 0, .revents = 0}};
         fds[0].events = POLLERR | POLLHUP | ((flags & MSG_OOB) ? POLLWRBAND : POLLWRNORM);
@@ -608,6 +613,90 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
     }
 }
 
+void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffer* receivePayload,
+                                         MsgResponse& response) {
+    response.which_payload = MsgRequest_socketReceiveRequest_tag;
+    auto& resp = response.payload.socketReceiveResponse;
+
+    resp.data.arg = receivePayload;
+    resp.data.funcs.encode = bufferEncodeCb;
+    resp.err = 0;
+    resp.has_address = false;
+
+    const int sock = ResolveHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (request.maxLen == 0) return;
+
+    const SocketContext& ctx = *sockets[request.handle];
+    const int32_t timeout = normalizeTimeout(request.timeout);
+    const int flags = translateIOFlags(request.flags);
+    sockaddr_in saddr;
+
+    const size_t receiveLen = min(request.maxLen, MAX_RECEIVE_LEN);
+    receivePayload->data = make_unique<uint8_t[]>(receiveLen);
+    receivePayload->size = 0;
+
+    int64_t timestampStart = timestampMsec();
+
+    while (true) {
+        void* recvBuf = receivePayload->data.get() + receivePayload->size;
+        const size_t recvSize = receiveLen - receivePayload->size;
+        socklen_t saddrLen = sizeof(saddr);
+
+        const ssize_t recvResult = request.addressRequested
+                                       ? withRetry(recvfrom, sock, recvBuf, recvSize, flags,
+                                                   reinterpret_cast<sockaddr*>(&saddr), &saddrLen)
+                                       : withRetry(recv, sock, recvBuf, recvSize, flags);
+
+        if (recvResult != -1) {
+            receivePayload->size += recvResult;
+        } else if (errno != EAGAIN || !ctx.blocking) {
+            resp.err = NetworkCodes::errnoToPalm(errno);
+            break;
+        }
+
+        if (!ctx.blocking || (receivePayload->size > 0 && request.addressRequested)) break;
+
+        const int64_t now = timestampMsec();
+        if (now - timestampStart >= timeout || receivePayload->size >= receiveLen) {
+            break;
+        }
+
+        pollfd fds[] = {{.fd = sock, .events = 0, .revents = 0}};
+        fds[0].events = POLLERR | POLLHUP | ((flags & MSG_OOB) ? POLLRDBAND : POLLRDNORM);
+
+        switch (withRetry(poll, fds, 1, timeout - (now - timestampStart))) {
+            case -1:
+                cerr << "poll failed during read: " << errno << endl;
+                resp.err = NetworkCodes::netErrInternal;
+                goto receive_finalize_response;
+
+                if (receivePayload->size == 0) resp.err = NetworkCodes::netErrTimeout;
+                goto receive_finalize_response;
+
+            default:
+                break;
+        }
+    }
+
+receive_finalize_response:
+
+    if (receivePayload->size > receiveLen) {
+        cerr << "BUG: receive buffer overflow" << endl;
+        receivePayload->size = receiveLen;
+        resp.err = NetworkCodes::netErrInternal;
+    }
+
+    if (request.addressRequested && receivePayload->size > 0) {
+        encodeSockaddr(reinterpret_cast<sockaddr*>(&saddr), resp.address, sizeof(saddr));
+        resp.has_address = true;
+    }
+}
+
 int32_t NetworkSession::GetFreeHandle() {
     for (size_t i = 0; i < sockets.size(); i++)
         if (!sockets[i]) return i;
@@ -629,6 +718,16 @@ std::optional<uint32_t> NetworkSession::ResolveSock(int sock) const {
         if (sockets[handle] && sockets[handle]->sock == sock) return handle;
 
     return nullopt;
+}
+
+bool NetworkSession::bufferEncodeCb(pb_ostream_t* stream, const pb_field_iter_t* field,
+                                    void* const* arg) {
+    if (!arg) return false;
+
+    auto buffer = reinterpret_cast<const Buffer*>(*arg);
+
+    pb_encode_tag_for_field(stream, field);
+    return pb_encode_string(stream, buffer->data.get(), buffer->size);
 }
 
 NetworkSession::SocketContext::SocketContext(int sock) : sock(sock) {}
