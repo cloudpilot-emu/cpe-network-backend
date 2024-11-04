@@ -269,7 +269,7 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payload
 
     response.id = request.id;
 
-    SendResponse(response, RESPONSE_STATIC_SIZE);
+    SendResponse(response, RESPONSE_STATIC_SIZE + responseBuffer.size);
 }
 
 void NetworkSession::HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse& response) {
