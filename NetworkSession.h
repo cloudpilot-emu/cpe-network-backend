@@ -60,8 +60,8 @@ class NetworkSession {
                              MsgResponse& response);
 
     int32_t GetFreeHandle();
-    int ResolveHandle(uint32_t handle) const;
-    std::optional<uint32_t> ResolveSock(int sock) const;
+    int SocketForHandle(uint32_t handle) const;
+    std::optional<uint32_t> HandleForSocket(int sock) const;
 
     static bool bufferEncodeCb(pb_ostream_t* stream, const pb_field_iter_t* field,
                                void* const* arg);

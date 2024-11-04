@@ -323,7 +323,7 @@ void NetworkSession::HandleSocketClose(MsgSocketCloseRequest& request, MsgRespon
 
     resp.err = 0;
 
-    const int sock = ResolveHandle(request.handle);
+    const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrInternal;
         return;
@@ -344,7 +344,7 @@ void NetworkSession::HandleSocketOptionSet(MsgSocketOptionSetRequest& request,
 
     resp.err = 0;
 
-    const int sock = ResolveHandle(request.handle);
+    const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
@@ -380,7 +380,7 @@ void NetworkSession::HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse
 
     resp.err = 0;
 
-    const int sock = ResolveHandle(request.handle);
+    const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
@@ -427,7 +427,7 @@ void NetworkSession::HandleSocketBind(MsgSocketBindRequest& request, MsgResponse
 
     resp.err = 0;
 
-    const int sock = ResolveHandle(request.handle);
+    const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
@@ -447,7 +447,7 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
 
     resp.err = 0;
 
-    const int sock = ResolveHandle(request.handle);
+    const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
@@ -503,7 +503,7 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
         const uint32_t mask = static_cast<uint32_t>(1) << handle;
         if ((fdmask & mask) == 0) continue;
 
-        const int fd = ResolveHandle(handle);
+        const int fd = SocketForHandle(handle);
         if (fd == -1) continue;
 
         fds[fdcnt] = {.fd = fd, .events = 0, .revents = 0};
@@ -528,7 +528,7 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
     }
 
     for (uint32_t i = 0; i < fdcnt; i++) {
-        const auto handle = ResolveSock(fds[i].fd);
+        const auto handle = HandleForSocket(fds[i].fd);
         if (!handle) {
             cerr << "BUG: unable to resolve socket to handle!" << endl;
             continue;
@@ -548,7 +548,7 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
     resp.bytesSent = 0;
     resp.err = 0;
 
-    const int sock = ResolveHandle(request.handle);
+    const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
@@ -623,7 +623,7 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
     resp.err = 0;
     resp.has_address = false;
 
-    const int sock = ResolveHandle(request.handle);
+    const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
@@ -699,13 +699,13 @@ receive_finalize_response:
 }
 
 int32_t NetworkSession::GetFreeHandle() {
-    for (size_t i = 0; i < sockets.size(); i++)
+    for (int32_t i = 0; i < static_cast<int32_t>(sockets.size()); i++)
         if (!sockets[i]) return i;
 
     return -1;
 }
 
-int NetworkSession::ResolveHandle(uint32_t handle) const {
+int NetworkSession::SocketForHandle(uint32_t handle) const {
     if (handle > MAX_HANDLE) return -1;
 
     const auto& socketContext = sockets[handle];
@@ -714,7 +714,7 @@ int NetworkSession::ResolveHandle(uint32_t handle) const {
     return socketContext->sock;
 }
 
-std::optional<uint32_t> NetworkSession::ResolveSock(int sock) const {
+std::optional<uint32_t> NetworkSession::HandleForSocket(int sock) const {
     for (uint32_t handle = 0; handle <= MAX_HANDLE; handle++)
         if (sockets[handle] && sockets[handle]->sock == sock) return handle;
 
