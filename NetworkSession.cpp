@@ -748,7 +748,8 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
                 if (_res.nsaddr_list[i].sin_family != AF_INET) continue;
 
                 found = encodeSockaddrIp(reinterpret_cast<const sockaddr*>(&_res.nsaddr_list[i]),
-                                         resp.value.uint32val, sizeof(_res.nsaddr_list[i]));
+                                         resp.value.uint32val, sizeof(_res.nsaddr_list[i])) ||
+                        found;
                 if (++hits == dnsLevel) break;
             }
 
