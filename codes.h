@@ -167,6 +167,12 @@ namespace NetworkCodes {
     constexpr uint16_t netSocketOptSockRequireErrClear = 0x2001;
     constexpr uint16_t netSocketOptSockMultiPktAddr = 0x2002;
 
+    constexpr uint16_t netSettingPrimaryDNS = 1;
+    constexpr uint16_t netSettingSecondaryDNS = 2;
+    constexpr uint16_t netSettingHostName = 6;
+    constexpr uint16_t netSettingRTPrimaryDNS = 0x1004;
+    constexpr uint16_t netSettingRTSecondaryDNS = 0x1005;
+
     uint16_t errnoToPalm(int err);
 }  // namespace NetworkCodes
 

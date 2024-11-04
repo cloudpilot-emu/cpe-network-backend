@@ -1,10 +1,13 @@
 #include "NetworkSession.h"
 
+#include <arpa/nameser.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <resolv.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <cerrno>
@@ -42,7 +45,7 @@ using namespace std;
 namespace {
     constexpr size_t INITIAL_SIZE_REQUEST = 1024;
     constexpr size_t INITIAL_SIZE_RESPONSE = 1024;
-    constexpr size_t RESPONSE_STATIC_SIZE = 128;
+    constexpr size_t RESPONSE_STATIC_SIZE = 512;
     constexpr uint32_t MAX_TIMEOUT = 10000;
     constexpr uint32_t MAX_RECEIVE_LEN = 0xffff;
 
@@ -79,6 +82,14 @@ namespace {
         addr.ip = ntohl(saddr4->sin_addr.s_addr);
         addr.port = ntohs(saddr4->sin_port);
 
+        return true;
+    }
+
+    bool encodeSockaddrIp(const sockaddr* saddr, uint32_t& addr, socklen_t len) {
+        if (len < sizeof(sockaddr_in) || saddr->sa_family != AF_INET) return false;
+        const auto saddr4 = reinterpret_cast<const sockaddr_in*>(saddr);
+
+        addr = ntohl(saddr4->sin_addr.s_addr);
         return true;
     }
 
@@ -259,6 +270,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payload
 
         case MsgRequest_socketReceiveRequest_tag:
             HandleSocketReceive(request.payload.socketReceiveRequest, &responseBuffer, response);
+            break;
+
+        case MsgRequest_settingGetRequest_tag:
+            HandleSettingsGet(request.payload.settingGetRequest, response);
             break;
 
         default:
@@ -695,6 +710,60 @@ receive_finalize_response:
     if (request.addressRequested && receivePayload->size > 0) {
         encodeSockaddr(reinterpret_cast<sockaddr*>(&saddr), resp.address, sizeof(saddr));
         resp.has_address = true;
+    }
+}
+
+void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgResponse& response) {
+    response.which_payload = MsgResponse_settingGetResponse_tag;
+    auto& resp = response.payload.settingGetResponse;
+
+    size_t dnsLevel = 2;
+    switch (request.setting) {
+        case NetworkCodes::netSettingHostName: {
+            if (withRetry(gethostname, resp.value.strval, 256) == -1 && errno != ENAMETOOLONG) {
+                resp.err = NetworkCodes::netErrPrefNotFound;
+                return;
+            }
+
+            resp.which_value = MsgSettingGetResponse_strval_tag;
+            resp.value.strval[255] = '\0';
+            break;
+        }
+
+        case NetworkCodes::netSettingPrimaryDNS:
+        case NetworkCodes::netSettingRTPrimaryDNS:
+            dnsLevel = 1;
+            [[fallthrough]];
+
+        case NetworkCodes::netSettingSecondaryDNS:
+        case NetworkCodes::netSettingRTSecondaryDNS: {
+            if (res_init() == -1 || _res.nscount <= 0) {
+                resp.err = NetworkCodes::netErrPrefNotFound;
+                return;
+            }
+
+            bool found;
+            size_t hits = 0;
+            for (size_t i = 0; i < static_cast<size_t>(_res.nscount); i++) {
+                if (_res.nsaddr_list[i].sin_family != AF_INET) continue;
+
+                found = encodeSockaddrIp(reinterpret_cast<const sockaddr*>(&_res.nsaddr_list[i]),
+                                         resp.value.uint32val, sizeof(_res.nsaddr_list[i]));
+                if (++hits == dnsLevel) break;
+            }
+
+            if (!found) {
+                resp.err = NetworkCodes::netErrPrefNotFound;
+                return;
+            }
+
+            resp.which_value = MsgSettingGetResponse_uint32val_tag;
+
+            break;
+        }
+
+        default:
+            resp.err = NetworkCodes::netErrPrefNotFound;
     }
 }
 
