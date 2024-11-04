@@ -742,7 +742,7 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
                 return;
             }
 
-            bool found;
+            bool found = false;
             size_t hits = 0;
             for (size_t i = 0; i < static_cast<size_t>(_res.nscount); i++) {
                 if (_res.nsaddr_list[i].sin_family != AF_INET) continue;
