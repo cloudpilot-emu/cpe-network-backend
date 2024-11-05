@@ -26,7 +26,8 @@
 // TODO
 //
 // * Support ICMP / ICMP over raw socket
-// * Test blocking code paths for connect, send
+// * Test blocking code paths for connect, send, receive
+// * Test hostname
 
 using namespace std;
 
@@ -219,8 +220,6 @@ void NetworkSession::WorkerMain() {
         HandleRpcRequest(request, payloadBuffer);
     }
 
-    worker.detach();
-
     for (const auto& ctx : sockets) {
         if (!ctx) continue;
 
@@ -228,6 +227,7 @@ void NetworkSession::WorkerMain() {
         withRetry(close, ctx->sock);
     }
 
+    worker.detach();
     hasTerminated = true;
 }
 
@@ -720,13 +720,14 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
     size_t dnsLevel = 2;
     switch (request.setting) {
         case NetworkCodes::netSettingHostName: {
-            if (withRetry(gethostname, resp.value.strval, 256) == -1 && errno != ENAMETOOLONG) {
+            if (withRetry(gethostname, resp.value.strval, sizeof(resp.value.strval)) == -1 &&
+                errno != ENAMETOOLONG) {
                 resp.err = NetworkCodes::netErrPrefNotFound;
                 return;
             }
 
             resp.which_value = MsgSettingGetResponse_strval_tag;
-            resp.value.strval[255] = '\0';
+            resp.value.strval[sizeof(resp.value.strval) - 1] = '\0';
             break;
         }
 
