@@ -596,11 +596,11 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
             return;
         }
 
-        if (!ctx.blocking) return;
+        if (!ctx.blocking || resp.bytesSent >= static_cast<int32_t>(sendPayload.size)) return;
 
         const int64_t now = timestampMsec();
-        if (now - timestampStart >= timeout ||
-            resp.bytesSent >= static_cast<int32_t>(sendPayload.size)) {
+        if (now - timestampStart >= timeout) {
+            if (resp.bytesSent == 0) resp.err = NetworkCodes::netErrTimeout;
             return;
         }
 
@@ -674,17 +674,20 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
             break;
         }
 
-        if (!ctx.blocking || (receivePayload->size > 0 && request.addressRequested)) break;
+        if (!ctx.blocking || receivePayload->size > 0) break;
 
         const int64_t now = timestampMsec();
-        if (now - timestampStart >= timeout || receivePayload->size >= receiveLen) {
+        if (now - timestampStart >= timeout) {
+            if (receivePayload->size == 0) resp.err = NetworkCodes::netErrTimeout;
             break;
         }
 
         pollfd fds[] = {{.fd = sock, .events = 0, .revents = 0}};
         fds[0].events = POLLERR | POLLHUP | ((flags & MSG_OOB) ? POLLRDBAND : POLLRDNORM);
 
-        switch (withRetry(poll, fds, 1, timeout - (now - timestampStart))) {
+        const int pollResult = withRetry(poll, fds, 1, timeout - (now - timestampStart));
+
+        switch (pollResult) {
             case -1:
                 cerr << "poll failed during read: " << errno << endl;
                 resp.err = NetworkCodes::netErrInternal;
