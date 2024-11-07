@@ -23,6 +23,12 @@ namespace NetworkSockopt {
 
     bool translateSetSockoptParameters(const MsgSocketOptionSetRequest& request,
                                        SockoptParameters& params);
+
+    bool translateGetSockoptParameters(const MsgSocketOptionGetRequest& request,
+                                       SockoptParameters& params);
+
+    void translateGetSockoptResponse(const SockoptParameters& params,
+                                     MsgSocketOptionGetResponse& response);
 }  // namespace NetworkSockopt
 
 #endif

@@ -56,12 +56,6 @@ namespace {
             case netSocketOptSockRcvLowWater:
                 return SO_RCVLOWAT;
 
-            case netSocketOptSockSndTimeout:
-                return SO_SNDTIMEO;
-
-            case netSocketOptSockRcvTimeout:
-                return SO_RCVTIMEO;
-
             case netSocketOptSockErrorStatus:
                 return SO_ERROR;
 
@@ -93,7 +87,8 @@ bool NetworkSockopt::translateSetSockoptParameters(const MsgSocketOptionSetReque
         params.len = sizeof(int);
         params.payload.intval = request.value.intval;
     } else {
-        params.len = min(static_cast<pb_size_t>(40), request.value.bufval.size);
+        params.len =
+            min(sizeof(request.value.bufval.bytes), static_cast<size_t>(request.value.bufval.size));
         memcpy(&params.payload.bufval, request.value.bufval.bytes, params.len);
     }
 
@@ -101,7 +96,7 @@ bool NetworkSockopt::translateSetSockoptParameters(const MsgSocketOptionSetReque
         case netSocketOptLevelSocket: {
             params.level = SOL_SOCKET;
 
-            auto translatedOption = translateSocketOption_levelSock(request.option);
+            const auto translatedOption = translateSocketOption_levelSock(request.option);
             if (!translatedOption) return false;
 
             params.name = *translatedOption;
@@ -128,7 +123,7 @@ bool NetworkSockopt::translateSetSockoptParameters(const MsgSocketOptionSetReque
         case netSocketOptLevelTCP: {
             params.level = IPPROTO_TCP;
 
-            auto translatedOption = translateSocketOption_levelTcp(request.option);
+            const auto translatedOption = translateSocketOption_levelTcp(request.option);
             if (!translatedOption) return false;
 
             params.name = *translatedOption;
@@ -138,4 +133,67 @@ bool NetworkSockopt::translateSetSockoptParameters(const MsgSocketOptionSetReque
     }
 
     return true;
+}
+
+bool NetworkSockopt::translateGetSockoptParameters(const MsgSocketOptionGetRequest& request,
+                                                   SockoptParameters& params) {
+    switch (request.level) {
+        case netSocketOptLevelSocket: {
+            params.level = SOL_SOCKET;
+
+            const auto translatedOption = translateSocketOption_levelSock(request.option);
+            if (!translatedOption) return false;
+
+            params.name = *translatedOption;
+            params.len = params.name == SO_LINGER ? sizeof(params.payload.linger)
+                                                  : sizeof(params.payload.intval);
+
+            break;
+        }
+
+        case netSocketOptLevelIP:
+            params.level = IPPROTO_IP;
+
+            if (request.option == netSocketOptIPOptions)
+                params.name = IP_OPTIONS;
+            else
+                return false;
+
+            params.len = sizeof(params.payload.bufval);
+
+            break;
+
+        case netSocketOptLevelTCP: {
+            params.level = IPPROTO_TCP;
+
+            const auto translatedOption = translateSocketOption_levelTcp(request.option);
+            if (!translatedOption) return false;
+
+            params.name = *translatedOption;
+            params.len = sizeof(params.payload.intval);
+
+            break;
+        }
+    }
+
+    return true;
+}
+
+void NetworkSockopt::translateGetSockoptResponse(const SockoptParameters& params,
+                                                 MsgSocketOptionGetResponse& response) {
+    if (params.level == SOL_SOCKET && params.name == SO_LINGER) {
+        response.which_value = MsgSocketOptionGetResponse_intval_tag;
+        response.value.intval = (params.payload.linger.l_onoff & 0xffff) |
+                                ((params.payload.linger.l_linger & 0xffff) << 16);
+    } else if (params.level == IPPROTO_IP && params.name == IP_OPTIONS) {
+        response.which_value = MsgSocketOptionGetResponse_bufval_tag;
+        response.value.bufval.size = params.len;
+
+        memcpy(response.value.bufval.bytes, params.payload.bufval,
+               min(min(sizeof(response.value.bufval.bytes), sizeof(params.payload.bufval)),
+                   static_cast<size_t>(params.len)));
+    } else {
+        response.which_value = MsgSocketOptionGetResponse_intval_tag;
+        response.value.intval = params.payload.intval;
+    }
 }

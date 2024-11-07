@@ -248,6 +248,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payload
             HandleSocketOptionSet(request.payload.socketOptionSetRequest, response);
             break;
 
+        case MsgRequest_socketOptionGetRequest_tag:
+            HandleSocketOptionGet(request.payload.socketOptionGetRequest, response);
+            break;
+
         case MsgRequest_socketAddrRequest_tag:
             HandleSocketAddr(request.payload.socketAddrRequest, response);
             break;
@@ -384,9 +388,45 @@ void NetworkSession::HandleSocketOptionSet(MsgSocketOptionSetRequest& request,
     }
 
     if (withRetry(setsockopt, sock, parameters.level, parameters.name, &parameters.payload,
-                  parameters.len)) {
+                  parameters.len) == -1) {
         resp.err = NetworkCodes::errnoToPalm(errno);
     }
+}
+
+void NetworkSession::HandleSocketOptionGet(MsgSocketOptionGetRequest& request,
+                                           MsgResponse& respose) {
+    respose.which_payload = MsgResponse_socketOptionGetResponse_tag;
+    auto& resp = respose.payload.socketOptionGetResponse;
+
+    resp.err = 0;
+
+    const int sock = SocketForHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (request.level == NetworkCodes::netSocketOptLevelSocket &&
+        request.option == NetworkCodes::netSocketOptSockNonBlocking) {
+        resp.which_value = MsgSocketOptionGetResponse_intval_tag;
+        resp.value.intval = !sockets[request.handle]->blocking;
+
+        return;
+    }
+
+    NetworkSockopt::SockoptParameters parameters;
+    if (!NetworkSockopt::translateGetSockoptParameters(request, parameters)) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (withRetry(getsockopt, sock, parameters.level, parameters.name, &parameters.payload,
+                  &parameters.len) == 1) {
+        resp.err = NetworkCodes::errnoToPalm(errno);
+        return;
+    }
+
+    NetworkSockopt::translateGetSockoptResponse(parameters, resp);
 }
 
 void NetworkSession::HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse& response) {

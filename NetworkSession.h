@@ -50,6 +50,7 @@ class NetworkSession {
     void HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse& response);
     void HandleSocketClose(MsgSocketCloseRequest& request, MsgResponse& response);
     void HandleSocketOptionSet(MsgSocketOptionSetRequest& request, MsgResponse& response);
+    void HandleSocketOptionGet(MsgSocketOptionGetRequest& request, MsgResponse& respose);
     void HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse& response);
     void HandleSocketBind(MsgSocketBindRequest& request, MsgResponse& response);
     void HandleSocketConnect(MsgSocketConnectRequest& request, MsgResponse& response);
