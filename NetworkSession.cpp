@@ -2,6 +2,7 @@
 
 #include <arpa/nameser.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <resolv.h>
@@ -15,6 +16,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <memory>
 
@@ -46,9 +48,25 @@ using namespace std;
 namespace {
     constexpr size_t INITIAL_SIZE_REQUEST = 1024;
     constexpr size_t INITIAL_SIZE_RESPONSE = 1024;
-    constexpr size_t RESPONSE_STATIC_SIZE = 512;
+    constexpr size_t RESPONSE_STATIC_SIZE = 1024;
     constexpr uint32_t MAX_TIMEOUT = 10000;
     constexpr uint32_t MAX_RECEIVE_LEN = 0xffff;
+
+    class Defer {
+       public:
+        Defer(std::function<void()> deferCb) : deferCb(deferCb) {}
+
+        ~Defer() { deferCb(); }
+
+       private:
+        std::function<void()> deferCb;
+
+       private:
+        Defer(const Defer&) = delete;
+        Defer(Defer&&) = delete;
+        Defer& operator=(const Defer&) = delete;
+        Defer& operator=(Defer&&) = delete;
+    };
 
     template <typename F, typename... Ts>
     int withRetry(F fn, Ts... args) {
@@ -278,6 +296,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payload
 
         case MsgRequest_settingGetRequest_tag:
             HandleSettingsGet(request.payload.settingGetRequest, response);
+            break;
+
+        case MsgRequest_getHostByNameRequest_tag:
+            HandleGetHostByName(request.payload.getHostByNameRequest, response);
             break;
 
         default:
@@ -810,6 +832,65 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
         default:
             resp.err = NetworkCodes::netErrPrefNotFound;
     }
+}
+
+void NetworkSession::HandleGetHostByName(MsgGetHostByNameRequest& request, MsgResponse& response) {
+    response.which_payload = MsgRequest_getHostByNameRequest_tag;
+    auto& resp = response.payload.getHostByNameResponse;
+
+    resp.has_alias = false;
+
+    addrinfo* result;
+    addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+
+    hints.ai_family = AF_INET;
+    hints.ai_flags = AI_DEFAULT | AI_CANONNAME;
+
+    const int gaierr = getaddrinfo(request.name, nullptr, &hints, &result);
+    if (gaierr != 0) {
+        resp.err = NetworkCodes::gaiErrorToPalm(gaierr);
+        return;
+    }
+
+    Defer freeResult([&]() { freeaddrinfo(result); });
+
+    strncpy(resp.name, request.name, sizeof(resp.name));
+    resp.name[sizeof(resp.name) - 1] = '\0';
+
+    addrinfo* iter = result;
+    uint32_t i = 0;
+    while (iter && i < 3) {
+        if (!encodeSockaddrIp(iter->ai_addr, resp.addresses[i], iter->ai_addrlen)) continue;
+
+        if (iter->ai_canonname) {
+            switch (i) {
+                case 0:
+                    strncpy(resp.name, iter->ai_canonname, sizeof(resp.name));
+                    resp.name[sizeof(resp.name) - 1] = '\0';
+                    break;
+
+                case 1:
+                    resp.has_alias = true;
+                    strncpy(resp.alias, iter->ai_canonname, sizeof(resp.alias));
+                    resp.alias[sizeof(resp.alias) - 1] = '\0';
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        iter = iter->ai_next;
+        i++;
+    }
+
+    if (i == 0) {
+        resp.err = NetworkCodes::netErrDNSNonexistantName;
+        return;
+    }
+
+    resp.addresses_count = i;
 }
 
 int32_t NetworkSession::GetFreeHandle() {

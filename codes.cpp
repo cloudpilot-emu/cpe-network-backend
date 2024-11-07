@@ -1,5 +1,7 @@
 #include "codes.h"
 
+#include <netdb.h>
+
 #include <cerrno>
 #include <iostream>
 
@@ -113,6 +115,25 @@ uint16_t NetworkCodes::errnoToPalm(int err) {
 
         default:
             cerr << "unhandled errno " << err << " mapped to netErrInternal" << endl;
+            return netErrInternal;
+    }
+}
+
+uint16_t NetworkCodes::gaiErrorToPalm(int err) {
+    switch (err) {
+        case EAI_NONAME:
+            return netErrDNSUnreachable;
+
+        case EAI_AGAIN:
+            return netErrDNSServerFailure;
+
+        case EAI_FAIL:
+            return netErrDNSRefused;
+
+        case EAI_NODATA:
+            return netErrDNSNonexistantName;
+
+        default:
             return netErrInternal;
     }
 }

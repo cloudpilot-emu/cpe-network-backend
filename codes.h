@@ -174,6 +174,7 @@ namespace NetworkCodes {
     constexpr uint16_t netSettingRTSecondaryDNS = 0x1005;
 
     uint16_t errnoToPalm(int err);
+    uint16_t gaiErrorToPalm(int err);
 }  // namespace NetworkCodes
 
 #endif  //  _NETWORK_CODES_H_
