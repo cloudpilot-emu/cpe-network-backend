@@ -1,5 +1,6 @@
 #include "NetworkSession.h"
 
+#include <arpa/inet.h>
 #include <arpa/nameser.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -19,6 +20,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <sstream>
 
 #include "codes.h"
 #include "pb_decode.h"
@@ -120,6 +122,70 @@ namespace {
 #ifdef HAVE_SIN_LEN
         saddr.sin_len = sizeof(sockaddr_in);
 #endif
+    }
+
+    unique_ptr<sockaddr> translateAddress(Address& addr, size_t& addrLen) {
+        ostringstream ip;
+        ip << (addr.ip >> 24) << "." << ((addr.ip >> 16) & 0xff) << "." << ((addr.ip >> 8) & 0xff)
+           << "." << (addr.ip & 0xff);
+
+        ostringstream port;
+        port << addr.port;
+
+        addrinfo* result;
+        addrinfo hints;
+
+        memset(&hints, 0, sizeof(hints));
+        hints.ai_family = PF_UNSPEC;
+        hints.ai_flags = AI_DEFAULT | AI_NUMERICHOST | AI_NUMERICSERV;
+
+        const int gaierr = getaddrinfo(ip.str().c_str(), port.str().c_str(), nullptr, &result);
+
+        if (gaierr != 0) {
+            cerr << "failed to translate " << ip.str() << " : " << gai_strerror(gaierr) << endl;
+            return unique_ptr<sockaddr>();
+        }
+
+        Defer freeResult([&]() { freeaddrinfo(result); });
+
+        if (!result->ai_addr) {
+            cerr << ip.str() << " did not translate to a valid address" << endl;
+            return unique_ptr<sockaddr>();
+        }
+
+#ifdef LOGGING
+        char buffer[50];
+        buffer[sizeof(buffer) - 1] = '\0';
+
+        switch (result->ai_addr->sa_family) {
+            case AF_INET:
+                inet_ntop(AF_INET, &reinterpret_cast<const sockaddr_in*>(result->ai_addr)->sin_addr,
+                          buffer, sizeof(buffer));
+                LOG("translated %s to %s\n", ip.str().c_str(), buffer);
+
+                break;
+
+            case AF_INET6:
+                inet_ntop(AF_INET6,
+                          &reinterpret_cast<const sockaddr_in6*>(result->ai_addr)->sin6_addr,
+                          buffer, sizeof(buffer));
+                LOG("translated %s to %s\n", ip.str().c_str(), buffer);
+
+                break;
+
+            default:
+                LOG("translated %s to unknown address family %i\n", ip.str().c_str(),
+                    result->ai_addr->sa_family);
+
+                break;
+        }
+#endif
+
+        addrLen = result->ai_addrlen;
+        void* addrClone = malloc(addrLen);
+        memcpy(addrClone, result->ai_addr, addrLen);
+
+        return unique_ptr<sockaddr>(reinterpret_cast<sockaddr*>(addrClone));
     }
 
     bool setNonBlocking(int sock) {
@@ -531,10 +597,15 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
     }
 
     const SocketContext& ctx = *sockets[request.handle];
-    sockaddr_in saddr;
-    decodeSockaddr(request.address, saddr);
 
-    if (withRetry(connect, sock, reinterpret_cast<sockaddr*>(&saddr), sizeof(saddr)) == 0) return;
+    size_t saddrLen{0};
+    auto saddr = translateAddress(request.address, saddrLen);
+    if (!saddr) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (withRetry(connect, sock, reinterpret_cast<sockaddr*>(saddr.get()), saddrLen) == 0) return;
 
     if ((errno != EINPROGRESS && errno != EALREADY) || !ctx.blocking) {
         resp.err = NetworkCodes::errnoToPalm(errno);
@@ -637,8 +708,12 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
     const int32_t timeout = normalizeTimeout(request.timeout);
     const int flags = translateIOFlags(request.flags) & ~MSG_PEEK;
 
-    sockaddr_in saddr;
-    if (request.has_address) decodeSockaddr(request.address, saddr);
+    size_t saddrLen{0};
+    auto saddr = translateAddress(request.address, saddrLen);
+    if (!saddr) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
 
     int64_t timestampStart = timestampMsec();
 
@@ -648,7 +723,7 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
 
         const ssize_t sendResult =
             request.has_address ? withRetry(sendto, sock, sendBuf, sendSize, flags,
-                                            reinterpret_cast<sockaddr*>(&saddr), sizeof(saddr))
+                                            reinterpret_cast<sockaddr*>(saddr.get()), saddrLen)
                                 : withRetry(send, sock, sendBuf, sendSize, flags);
 
         if (sendResult != -1) {
@@ -787,8 +862,9 @@ receive_finalize_response:
         resp.err = NetworkCodes::netErrInternal;
     }
 
-    if (request.addressRequested && receivePayload->size > 0) {
-        encodeSockaddr(reinterpret_cast<sockaddr*>(&saddr), resp.address, sizeof(saddr));
+    if (request.addressRequested && receivePayload->size > 0)
+        resp.has_address =
+            encodeSockaddr(reinterpret_cast<sockaddr*>(&saddr), resp.address, sizeof(saddr));
 }
 
 void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgResponse& response) {
