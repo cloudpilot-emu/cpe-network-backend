@@ -789,8 +789,6 @@ receive_finalize_response:
 
     if (request.addressRequested && receivePayload->size > 0) {
         encodeSockaddr(reinterpret_cast<sockaddr*>(&saddr), resp.address, sizeof(saddr));
-        resp.has_address = true;
-    }
 }
 
 void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgResponse& response) {
