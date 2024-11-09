@@ -87,8 +87,9 @@ bool NetworkSockopt::translateSetSockoptParameters(const MsgSocketOptionSetReque
         params.len = sizeof(int);
         params.payload.intval = request.value.intval;
     } else {
-        params.len =
-            min(sizeof(request.value.bufval.bytes), static_cast<size_t>(request.value.bufval.size));
+        params.len = static_cast<socklen_t>(min(sizeof(request.value.bufval.bytes),
+                                                static_cast<size_t>(request.value.bufval.size)));
+
         memcpy(&params.payload.bufval, request.value.bufval.bytes, params.len);
     }
 
