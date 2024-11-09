@@ -47,6 +47,10 @@ using namespace std;
     #define HAVE_SIN_LEN
 #endif
 
+#ifndef AI_V4MAPPED_CFG
+    #define AI_V4MAPPED_CFG AI_V4MAPPED
+#endif
+
 #ifndef AI_DEFAULT
     #define AI_DEFAULT (AI_V4MAPPED_CFG | AI_ADDRCONFIG)
 #endif
