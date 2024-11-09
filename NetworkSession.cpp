@@ -47,6 +47,10 @@ using namespace std;
     #define HAVE_SIN_LEN
 #endif
 
+#ifndef AI_DEFAULT
+    #define AI_DEFAULT (AI_V4MAPPED_CFG | AI_ADDRCONFIG)
+#endif
+
 namespace {
     constexpr size_t INITIAL_SIZE_REQUEST = 1024;
     constexpr size_t INITIAL_SIZE_RESPONSE = 1024;
