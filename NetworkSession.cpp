@@ -853,8 +853,9 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
 
 receive_finalize_response:
 
-    if (resp.err == NetworkCodes::netErrSocketClosedByRemote && receivePayload->size > 0)
+    if (resp.err == NetworkCodes::netErrSocketClosedByRemote && receivePayload->size > 0) {
         resp.err = 0;
+    }
 
     if (receivePayload->size > receiveLen) {
         cerr << "BUG: receive buffer overflow" << endl;
@@ -862,9 +863,10 @@ receive_finalize_response:
         resp.err = NetworkCodes::netErrInternal;
     }
 
-    if (request.addressRequested && receivePayload->size > 0)
+    if (request.addressRequested && receivePayload->size > 0) {
         resp.has_address =
             encodeSockaddr(reinterpret_cast<sockaddr*>(&saddr), resp.address, sizeof(saddr));
+    }
 }
 
 void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgResponse& response) {
@@ -983,8 +985,9 @@ void NetworkSession::HandleGetHostByName(MsgGetHostByNameRequest& request, MsgRe
 }
 
 int32_t NetworkSession::GetFreeHandle() {
-    for (int32_t i = 0; i < static_cast<int32_t>(sockets.size()); i++)
+    for (int32_t i = 0; i < static_cast<int32_t>(sockets.size()); i++) {
         if (!sockets[i]) return i;
+    }
 
     return -1;
 }
@@ -999,8 +1002,9 @@ int NetworkSession::SocketForHandle(uint32_t handle) const {
 }
 
 std::optional<uint32_t> NetworkSession::HandleForSocket(int sock) const {
-    for (uint32_t handle = 0; handle <= MAX_HANDLE; handle++)
+    for (uint32_t handle = 0; handle <= MAX_HANDLE; handle++) {
         if (sockets[handle] && sockets[handle]->sock == sock) return handle;
+    }
 
     return nullopt;
 }
