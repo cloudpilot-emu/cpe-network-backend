@@ -146,7 +146,7 @@ namespace {
             return unique_ptr<sockaddr>();
         }
 
-        Defer freeResult([&]() { freeaddrinfo(result); });
+        Defer freeResult([=]() { freeaddrinfo(result); });
 
         if (!result->ai_addr) {
             cerr << ip.str() << " did not translate to a valid address" << endl;
@@ -942,7 +942,7 @@ void NetworkSession::HandleGetHostByName(MsgGetHostByNameRequest& request, MsgRe
         return;
     }
 
-    Defer freeResult([&]() { freeaddrinfo(result); });
+    Defer freeResult([=]() { freeaddrinfo(result); });
 
     strncpy(resp.name, request.name, sizeof(resp.name));
     resp.name[sizeof(resp.name) - 1] = '\0';
