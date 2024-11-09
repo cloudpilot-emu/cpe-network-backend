@@ -717,10 +717,15 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
     const int flags = translateIOFlags(request.flags) & ~MSG_PEEK;
 
     size_t saddrLen{0};
-    auto saddr = translateAddress(request.address, saddrLen);
-    if (!saddr) {
-        resp.err = NetworkCodes::netErrParamErr;
-        return;
+    unique_ptr<sockaddr> saddr;
+
+    if (request.has_address) {
+        auto saddr = translateAddress(request.address, saddrLen);
+
+        if (!saddr) {
+            resp.err = NetworkCodes::netErrParamErr;
+            return;
+        }
     }
 
     int64_t timestampStart = timestampMsec();
