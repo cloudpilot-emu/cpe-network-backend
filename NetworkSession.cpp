@@ -162,8 +162,8 @@ namespace {
         }
 
 #ifdef LOGGING
-        char buffer[50];
-        buffer[sizeof(buffer) - 1] = '\0';
+        char buffer[64];
+        memset(buffer, 0, sizeof(buffer));
 
         switch (result->ai_addr->sa_family) {
             case AF_INET:
