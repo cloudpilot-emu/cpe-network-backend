@@ -759,8 +759,6 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
             resp.err = NetworkCodes::netErrParamErr;
             return;
         }
-
-        cout << saddrLen << endl;
     }
 
     int64_t timestampStart = timestampMsec();
