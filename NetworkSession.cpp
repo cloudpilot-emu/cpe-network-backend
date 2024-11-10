@@ -178,7 +178,7 @@ namespace {
                 inet_ntop(AF_INET6,
                           &reinterpret_cast<const sockaddr_in6*>(result->ai_addr)->sin6_addr,
                           buffer, sizeof(buffer));
-                LOG("translated %s to %s port\n", ip.str().c_str(), buffer,
+                LOG("translated %s to %s port %i\n", ip.str().c_str(), buffer,
                     ntohs(reinterpret_cast<const sockaddr_in6*>(result->ai_addr)->sin6_port));
 
                 break;
