@@ -169,7 +169,8 @@ namespace {
             case AF_INET:
                 inet_ntop(AF_INET, &reinterpret_cast<const sockaddr_in*>(result->ai_addr)->sin_addr,
                           buffer, sizeof(buffer));
-                LOG("translated %s to %s\n", ip.str().c_str(), buffer);
+                LOG("translated %s to %s port %i\n", ip.str().c_str(), buffer,
+                    ntohs(reinterpret_cast<const sockaddr_in*>(result->ai_addr)->sin_port));
 
                 break;
 
@@ -177,7 +178,8 @@ namespace {
                 inet_ntop(AF_INET6,
                           &reinterpret_cast<const sockaddr_in6*>(result->ai_addr)->sin6_addr,
                           buffer, sizeof(buffer));
-                LOG("translated %s to %s\n", ip.str().c_str(), buffer);
+                LOG("translated %s to %s port\n", ip.str().c_str(), buffer,
+                    ntohs(reinterpret_cast<const sockaddr_in6*>(result->ai_addr)->sin6_port));
 
                 break;
 
@@ -237,6 +239,15 @@ namespace {
 
         return ioflags;
     }
+
+    string formatAddress(const Address& addr) {
+        ostringstream s;
+
+        s << (addr.ip >> 24) << "." << ((addr.ip >> 16) & 0xff) << "." << ((addr.ip >> 8) & 0xff)
+          << "." << (addr.ip & 0xff) << ":" << addr.port;
+
+        return s.str();
+    }
 }  // namespace
 
 NetworkSession::NetworkSession(RpcResultCb resultCb)
@@ -261,8 +272,6 @@ void NetworkSession::Terminate() {
 }
 
 bool NetworkSession::DispatchRpc(const uint8_t* data, size_t len) {
-    LOG("dispatch rpc\n");
-
     unique_lock<mutex> lock(dispatchMutex);
 
     if (terminateRequested) {
@@ -394,6 +403,12 @@ void NetworkSession::HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse
     resp.handle = -1;
     resp.err = 0;
 
+    LOG("SocketOpen type %i protocol %i\n", request.type, request.protocol);
+
+#ifdef LOGGING
+    Defer logResult([&]() { LOG("SocketOpen result err %i handle %i\n", resp.err, resp.handle); });
+#endif
+
     int socketType = mapSocketType(request.type);
     if (socketType < 0) {
         LOG("bad socket type %i\n", request.type);
@@ -437,6 +452,8 @@ void NetworkSession::HandleSocketClose(MsgSocketCloseRequest& request, MsgRespon
     auto& resp = response.payload.socketCloseResponse;
 
     resp.err = 0;
+
+    LOG("SocketClose handle %i\n", request.handle);
 
     const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
@@ -598,6 +615,9 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
 
     resp.err = 0;
 
+    LOG("SocketConnect to %s handle %i timeout %i\n", formatAddress(request.address).c_str(),
+        request.handle, request.timeout);
+
     const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
@@ -704,6 +724,19 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
     resp.bytesSent = 0;
     resp.err = 0;
 
+    if (request.has_address) {
+        LOG("SocketSendTo %s handle %i flags %i timeout %i\n",
+            formatAddress(request.address).c_str(), request.handle, request.flags, request.timeout);
+    } else {
+        LOG("SocketSend handle %i flags %i timeout %i\n", request.handle, request.flags,
+            request.timeout);
+    }
+
+#ifdef LOGGING
+    Defer logResult(
+        [&]() { LOG("SocketSend result bytesSend %i err %i\n", resp.bytesSent, resp.err); });
+#endif
+
     const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
         resp.err = NetworkCodes::netErrParamErr;
@@ -726,6 +759,8 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
             resp.err = NetworkCodes::netErrParamErr;
             return;
         }
+
+        cout << saddrLen << endl;
     }
 
     int64_t timestampStart = timestampMsec();
@@ -735,9 +770,9 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
         const size_t sendSize = sendPayload.size - resp.bytesSent;
 
         const ssize_t sendResult =
-            request.has_address ? withRetry(sendto, sock, sendBuf, sendSize, flags,
-                                            reinterpret_cast<sockaddr*>(saddr.get()), saddrLen)
-                                : withRetry(send, sock, sendBuf, sendSize, flags);
+            request.has_address
+                ? withRetry(sendto, sock, sendBuf, sendSize, flags, saddr.get(), saddrLen)
+                : withRetry(send, sock, sendBuf, sendSize, flags);
 
         if (sendResult != -1) {
             resp.bytesSent += sendResult;
