@@ -753,7 +753,7 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
     unique_ptr<sockaddr> saddr;
 
     if (request.has_address) {
-        auto saddr = translateAddress(request.address, saddrLen);
+        saddr = translateAddress(request.address, saddrLen);
 
         if (!saddr) {
             resp.err = NetworkCodes::netErrParamErr;
