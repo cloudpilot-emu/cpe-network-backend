@@ -993,9 +993,8 @@ void NetworkSession::HandleGetHostByName(MsgGetHostByNameRequest& request, MsgRe
     strncpy(resp.name, request.name, sizeof(resp.name));
     resp.name[sizeof(resp.name) - 1] = '\0';
 
-    addrinfo* iter = result;
     uint32_t i = 0;
-    while (iter && i < 3) {
+    for (addrinfo* iter = result; iter != nullptr && i < 3; iter = iter->ai_next) {
         if (!encodeSockaddrIp(iter->ai_addr, resp.addresses[i], iter->ai_addrlen)) continue;
 
         if (iter->ai_canonname) {
@@ -1016,7 +1015,6 @@ void NetworkSession::HandleGetHostByName(MsgGetHostByNameRequest& request, MsgRe
             }
         }
 
-        iter = iter->ai_next;
         i++;
     }
 
@@ -1042,9 +1040,9 @@ void NetworkSession::HandleGetServByName(MsgGetServByNameRequest& request, MsgRe
     hints.ai_family = AF_INET;
     hints.ai_flags = AI_DEFAULT;
 
-    if (strncmp(request.protocol, "tcp", 4) == 0) {
+    if (strncmp(request.protocol, "tcp", sizeof(request.protocol)) == 0) {
         hints.ai_protocol = IPPROTO_TCP;
-    } else if (strncmp(request.protocol, "udp", 4) == 0) {
+    } else if (strncmp(request.protocol, "udp", sizeof(request.protocol)) == 0) {
         hints.ai_protocol = IPPROTO_UDP;
     } else {
         resp.err = NetworkCodes::netErrUnknownProtocol;
@@ -1059,8 +1057,7 @@ void NetworkSession::HandleGetServByName(MsgGetServByNameRequest& request, MsgRe
 
     Defer freeResult([=]() { freeaddrinfo(result); });
 
-    addrinfo* iter = result;
-    while (iter) {
+    for (addrinfo* iter = result; iter != nullptr; iter = iter->ai_next) {
         if (iter->ai_addr->sa_family != AF_INET) continue;
 
         resp.port = ntohs(reinterpret_cast<sockaddr_in*>(iter->ai_addr)->sin_port);
