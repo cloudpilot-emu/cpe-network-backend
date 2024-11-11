@@ -27,12 +27,6 @@
 #include "pb_encode.h"
 #include "sockopt.h"
 
-// TODO
-//
-// * Support ICMP / ICMP over raw socket
-// * Test blocking code paths for connect, send, receive
-// * Test hostname
-
 using namespace std;
 
 #define LOGGING
@@ -421,8 +415,8 @@ void NetworkSession::HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse
     }
 
     if (socketType == SOCK_RAW) {
-        LOG("TODO: RAW sockets currently unsupported\n");
-        resp.err = NetworkCodes::netErrParamErr;
+        LOG("RAW sockets are not unsupported\n");
+        resp.err = NetworkCodes::netErrUnimplemented;
         return;
     }
 
