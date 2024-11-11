@@ -61,6 +61,7 @@ class NetworkSession {
                              MsgResponse& response);
     void HandleSettingsGet(MsgSettingGetRequest& request, MsgResponse& response);
     void HandleGetHostByName(MsgGetHostByNameRequest& request, MsgResponse& response);
+    void HandleGetServByName(MsgGetServByNameRequest& request, MsgResponse& response);
 
     int32_t GetFreeHandle();
     int SocketForHandle(uint32_t handle) const;

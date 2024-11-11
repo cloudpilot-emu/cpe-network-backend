@@ -385,6 +385,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payload
             HandleGetHostByName(request.payload.getHostByNameRequest, response);
             break;
 
+        case MsgRequest_getServByNameRequest_tag:
+            HandleGetServByName(request.payload.getServByNameRequest, response);
+            break;
+
         default:
             response.which_payload = MsgResponse_invalidRequestResponse_tag;
             response.payload.invalidRequestResponse.tag = true;
@@ -1028,6 +1032,48 @@ void NetworkSession::HandleGetHostByName(MsgGetHostByNameRequest& request, MsgRe
     }
 
     resp.addresses_count = i;
+}
+
+void NetworkSession::HandleGetServByName(MsgGetServByNameRequest& request, MsgResponse& response) {
+    response.which_payload = MsgResponse_getServByNameResponse_tag;
+    auto& resp = response.payload.getServByNameResponse;
+
+    resp.err = 0;
+    resp.port = 0;
+
+    addrinfo* result;
+    addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+
+    hints.ai_family = AF_INET;
+    hints.ai_flags = AI_DEFAULT;
+
+    if (strncmp(request.protocol, "tcp", 4) == 0) {
+        hints.ai_protocol = IPPROTO_TCP;
+    } else if (strncmp(request.protocol, "udp", 4) == 0) {
+        hints.ai_protocol = IPPROTO_UDP;
+    } else {
+        resp.err = NetworkCodes::netErrUnknownProtocol;
+        return;
+    }
+
+    const int gaierr = getaddrinfo(nullptr, request.name, &hints, &result);
+    if (gaierr != 0) {
+        resp.err = NetworkCodes::gaiErrorToPalm(gaierr);
+        return;
+    }
+
+    Defer freeResult([=]() { freeaddrinfo(result); });
+
+    addrinfo* iter = result;
+    while (iter) {
+        if (iter->ai_addr->sa_family != AF_INET) continue;
+
+        resp.port = ntohs(reinterpret_cast<sockaddr_in*>(iter->ai_addr)->sin_port);
+        return;
+    }
+
+    resp.err = NetworkCodes::netErrUnknownService;
 }
 
 int32_t NetworkSession::GetFreeHandle() {
