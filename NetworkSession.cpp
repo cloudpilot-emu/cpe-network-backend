@@ -7,6 +7,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <resolv.h>
+#include <signal.h>
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -261,7 +262,9 @@ namespace {
 }  // namespace
 
 NetworkSession::NetworkSession(RpcResultCb resultCb)
-    : resultCb(resultCb), rpcRequest(INITIAL_SIZE_REQUEST), rpcResponse(INITIAL_SIZE_RESPONSE) {}
+    : resultCb(resultCb), rpcRequest(INITIAL_SIZE_REQUEST), rpcResponse(INITIAL_SIZE_RESPONSE) {
+    signal(SIGPIPE, SIG_IGN);
+}
 
 void NetworkSession::Start() {
     if (hasStarted) return;
@@ -333,6 +336,8 @@ void NetworkSession::WorkerMain() {
 
     for (const auto& ctx : sockets) {
         if (!ctx) continue;
+
+        LOG("cleaning out socket %i\n", ctx->sock);
 
         withRetry(shutdown, ctx->sock, SHUT_RDWR);
         withRetry(close, ctx->sock);
@@ -574,6 +579,16 @@ void NetworkSession::HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse
     auto& resp = response.payload.socketAddrResponse;
 
     resp.err = 0;
+
+    LOG("SocketAddr\n");
+
+#ifdef LOGGING
+    Defer logResult([&]() {
+        LOG("SocketAddr local %s remote %s\n",
+            resp.has_addressLocal ? formatAddress(resp.addressLocal).c_str() : "-",
+            resp.has_addressRemote ? formatAddress(resp.addressRemote).c_str() : "-");
+    });
+#endif
 
     const int sock = SocketForHandle(request.handle);
     if (sock == -1) {
