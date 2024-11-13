@@ -403,6 +403,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payload
             HandleSocketShutdown(request.payload.socketShutdownRequest, response);
             break;
 
+        case MsgRequest_socketListenRequest_tag:
+            HandleSocketListen(request.payload.socketListenRequest, response);
+            break;
+
         default:
             cerr << "unhandled RPC payload type " << request.which_payload << endl;
             response.which_payload = MsgResponse_invalidRequestResponse_tag;
@@ -1102,6 +1106,23 @@ void NetworkSession::HandleSocketShutdown(MsgSocketShutdownRequest& request,
     }
 
     if (withRetry(shutdown, sock, shutdownHow(request.direction)) == -1) {
+        resp.err = NetworkCodes::errnoToPalm(errno);
+    }
+}
+
+void NetworkSession::HandleSocketListen(MsgSocketListenRequest& request, MsgResponse& response) {
+    response.which_payload = MsgResponse_socketListenResponse_tag;
+    auto& resp = response.payload.socketListenResponse;
+
+    resp.err = 0;
+
+    const int sock = SocketForHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (withRetry(listen, sock, request.backlog) == -1) {
         resp.err = NetworkCodes::errnoToPalm(errno);
     }
 }
