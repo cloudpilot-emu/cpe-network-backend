@@ -407,6 +407,10 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payload
             HandleSocketListen(request.payload.socketListenRequest, response);
             break;
 
+        case MsgRequest_socketAcceptRequest_tag:
+            HandleSocketAccept(request.payload.socketAcceptRequest, response);
+            break;
+
         default:
             cerr << "unhandled RPC payload type " << request.which_payload << endl;
             response.which_payload = MsgResponse_invalidRequestResponse_tag;
@@ -1127,8 +1131,82 @@ void NetworkSession::HandleSocketListen(MsgSocketListenRequest& request, MsgResp
     }
 }
 
+void NetworkSession::HandleSocketAccept(MsgSocketAcceptRequest& request, MsgResponse& response) {
+    response.which_payload = MsgResponse_socketAcceptResponse_tag;
+    auto& resp = response.payload.socketAcceptResponse;
+
+    resp.err = 0;
+    resp.handle = 0;
+
+    const int sock = SocketForHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    const SocketContext& ctx = *sockets[request.handle];
+    pollfd fds[1];
+    sockaddr_in addr;
+    socklen_t addrLen = sizeof(addr);
+
+    int incomingSock = withRetry(accept, sock, reinterpret_cast<sockaddr*>(&addr), &addrLen);
+
+    if (incomingSock != -1) goto accept_return_socket;
+
+    if (errno != EWOULDBLOCK || !ctx.blocking) {
+        resp.err = NetworkCodes::errnoToPalm(errno);
+        return;
+    }
+
+    fds[0] = {.fd = sock, .events = POLLERR | POLLRDNORM, .revents = 0};
+
+    switch (withRetry(poll, fds, 1, normalizeTimeout(request.timeout))) {
+        case -1:
+            cerr << "poll failed during accept: " << errno << endl;
+            resp.err = NetworkCodes::netErrInternal;
+            return;
+
+        case 0:
+            resp.err = NetworkCodes::netErrTimeout;
+            return;
+
+        default:
+            break;
+    }
+
+    if (fds[0].revents & (POLLERR | POLLNVAL)) {
+        resp.err = getSocketError(sock);
+        return;
+    }
+
+    addrLen = sizeof(addr);
+    incomingSock = withRetry(accept, sock, reinterpret_cast<sockaddr*>(&addr), &addrLen);
+    if (incomingSock == -1) {
+        resp.err = NetworkCodes::errnoToPalm(errno);
+        return;
+    }
+
+accept_return_socket:
+    setNonBlocking(incomingSock);
+
+    int16_t handle = GetFreeHandle();
+    if (handle < 0) {
+        cerr << "no free handles left during accept, shutting down disposing incoming socket"
+             << endl;
+        shutdown(incomingSock, SHUT_RDWR);
+        close(incomingSock);
+
+        resp.err = NetworkCodes::netErrInternal;
+        return;
+    }
+
+    sockets[handle] = SocketContext(incomingSock);
+    resp.handle = handle;
+    encodeSockaddr(reinterpret_cast<const sockaddr*>(&addr), resp.address, addrLen);
+}
+
 int32_t NetworkSession::GetFreeHandle() {
-    for (int32_t i = 0; i < static_cast<int32_t>(sockets.size()); i++) {
+    for (int32_t i = 1; i < static_cast<int32_t>(sockets.size()); i++) {
         if (!sockets[i]) return i;
     }
 
@@ -1145,7 +1223,7 @@ int NetworkSession::SocketForHandle(uint32_t handle) const {
 }
 
 std::optional<uint32_t> NetworkSession::HandleForSocket(int sock) const {
-    for (uint32_t handle = 0; handle <= MAX_HANDLE; handle++) {
+    for (uint32_t handle = 1; handle <= MAX_HANDLE; handle++) {
         if (sockets[handle] && sockets[handle]->sock == sock) return handle;
     }
 

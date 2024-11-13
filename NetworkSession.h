@@ -64,6 +64,7 @@ class NetworkSession {
     void HandleGetServByName(MsgGetServByNameRequest& request, MsgResponse& response);
     void HandleSocketShutdown(MsgSocketShutdownRequest& request, MsgResponse& response);
     void HandleSocketListen(MsgSocketListenRequest& request, MsgResponse& response);
+    void HandleSocketAccept(MsgSocketAcceptRequest& request, MsgResponse& response);
 
     int32_t GetFreeHandle();
     int SocketForHandle(uint32_t handle) const;
@@ -75,7 +76,7 @@ class NetworkSession {
     static bool payloadDecodeCb(pb_istream_t* stream, const pb_field_iter_t* field, void** arg);
 
    private:
-    static constexpr size_t MAX_HANDLE = 31;
+    static constexpr size_t MAX_HANDLE = 32;
 
     RpcResultCb resultCb;
 
