@@ -173,6 +173,10 @@ namespace NetworkCodes {
     constexpr uint16_t netSettingRTPrimaryDNS = 0x1004;
     constexpr uint16_t netSettingRTSecondaryDNS = 0x1005;
 
+    constexpr uint16_t netSocketDirInput = 0;
+    constexpr uint16_t netSocketDirOutput = 1;
+    constexpr uint16_t netSocketDirBoth = 2;
+
     uint16_t errnoToPalm(int err);
     uint16_t gaiErrorToPalm(int err);
 }  // namespace NetworkCodes

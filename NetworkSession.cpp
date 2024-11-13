@@ -98,6 +98,22 @@ namespace {
         }
     }
 
+    int shutdownHow(uint16_t direction) {
+        switch (direction) {
+            case NetworkCodes::netSocketDirInput:
+                return SHUT_RD;
+
+            case NetworkCodes::netSocketDirOutput:
+                return SHUT_WR;
+
+            case NetworkCodes::netSocketDirBoth:
+                return SHUT_RDWR;
+
+            default:
+                return 0;
+        }
+    }
+
     bool encodeSockaddr(const sockaddr* saddr, Address& addr, socklen_t len) {
         if (len < sizeof(sockaddr_in) || saddr->sa_family != AF_INET) return false;
         const auto saddr4 = reinterpret_cast<const sockaddr_in*>(saddr);
@@ -383,7 +399,12 @@ void NetworkSession::HandleRpcRequest(MsgRequest& request, const Buffer& payload
             HandleGetServByName(request.payload.getServByNameRequest, response);
             break;
 
+        case MsgRequest_socketShutdownRequest_tag:
+            HandleSocketShutdown(request.payload.socketShutdownRequest, response);
+            break;
+
         default:
+            cerr << "unhandled RPC payload type " << request.which_payload << endl;
             response.which_payload = MsgResponse_invalidRequestResponse_tag;
             response.payload.invalidRequestResponse.tag = true;
             break;
@@ -1065,6 +1086,24 @@ void NetworkSession::HandleGetServByName(MsgGetServByNameRequest& request, MsgRe
     }
 
     resp.err = NetworkCodes::netErrUnknownService;
+}
+
+void NetworkSession::HandleSocketShutdown(MsgSocketShutdownRequest& request,
+                                          MsgResponse& response) {
+    response.which_payload = MsgResponse_socketShutdownResponse_tag;
+    auto& resp = response.payload.socketShutdownResponse;
+
+    resp.err = 0;
+
+    const int sock = SocketForHandle(request.handle);
+    if (sock == -1) {
+        resp.err = NetworkCodes::netErrParamErr;
+        return;
+    }
+
+    if (withRetry(shutdown, sock, shutdownHow(request.direction)) == -1) {
+        resp.err = NetworkCodes::errnoToPalm(errno);
+    }
 }
 
 int32_t NetworkSession::GetFreeHandle() {
