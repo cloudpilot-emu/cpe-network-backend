@@ -30,7 +30,9 @@
 
 using namespace std;
 
-#define LOGGING
+#ifdef NETWORK_BACKEND_LOGGING
+    #define LOGGING
+#endif
 
 #ifdef LOGGING
     #define LOG(...) fprintf(stderr, __VA_ARGS__);
@@ -262,12 +264,12 @@ namespace {
 }  // namespace
 
 NetworkSession::NetworkSession(RpcResultCb resultCb)
-    : resultCb(resultCb), rpcRequest(INITIAL_SIZE_REQUEST), rpcResponse(INITIAL_SIZE_RESPONSE) {
-    signal(SIGPIPE, SIG_IGN);
-}
+    : resultCb(resultCb), rpcRequest(INITIAL_SIZE_REQUEST), rpcResponse(INITIAL_SIZE_RESPONSE) {}
 
 void NetworkSession::Start() {
     if (hasStarted) return;
+
+    signal(SIGPIPE, SIG_IGN);
 
     worker = thread(bind(&NetworkSession::WorkerMain, this));
     hasStarted = true;
@@ -1204,7 +1206,6 @@ accept_return_socket:
     if (handle < 0) {
         cerr << "no free handles left during accept, shutting down disposing incoming socket"
              << endl;
-        shutdown(incomingSock, SHUT_RDWR);
         close(incomingSock);
 
         resp.err = NetworkCodes::netErrInternal;
