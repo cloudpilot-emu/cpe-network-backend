@@ -733,10 +733,6 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
     }
 
     switch (withRetry(poll, fds, fdcnt, normalizeTimeout(request.timeout))) {
-        case 0:
-            resp.err = NetworkCodes::netErrTimeout;
-            return;
-
         case -1:
             resp.err = NetworkCodes::errnoToPalm(errno);
             return;
