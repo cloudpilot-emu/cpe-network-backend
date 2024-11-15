@@ -253,6 +253,7 @@ namespace {
         return ioflags;
     }
 
+#ifdef LOGGING
     string formatAddress(const Address& addr) {
         ostringstream s;
 
@@ -261,6 +262,7 @@ namespace {
 
         return s.str();
     }
+#endif
 }  // namespace
 
 NetworkSession::NetworkSession(RpcResultCb resultCb)
