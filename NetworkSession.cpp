@@ -817,16 +817,16 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
         if (sendResult != -1) {
             resp.bytesSent += sendResult;
         } else if (errno != EAGAIN || !ctx.blocking) {
-            resp.err = NetworkCodes::errnoToPalm(errno);
-            break;
+            resp.err = errno == EPIPE ? 0 : NetworkCodes::errnoToPalm(errno);
+            return;
         }
 
-        if (!ctx.blocking || resp.bytesSent >= static_cast<int32_t>(sendPayload.size)) break;
+        if (!ctx.blocking || resp.bytesSent >= static_cast<int32_t>(sendPayload.size)) return;
 
         const int64_t now = timestampMsec();
         if (now - timestampStart >= timeout) {
             if (resp.bytesSent == 0) resp.err = NetworkCodes::netErrTimeout;
-            break;
+            return;
         }
 
         pollfd fds[] = {{.fd = sock, .events = 0, .revents = 0}};
@@ -836,11 +836,11 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
             case -1:
                 cerr << "poll failed during send: " << errno << endl;
                 resp.err = NetworkCodes::netErrInternal;
-                goto send_finalize_response;
+                return;
 
             case 0:
                 if (resp.bytesSent == 0) resp.err = NetworkCodes::netErrTimeout;
-                goto send_finalize_response;
+                return;
 
             default:
                 break;
@@ -848,13 +848,9 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
 
         if (fds[0].revents & (POLLERR | POLLNVAL)) {
             resp.err = getSocketError(sock);
-            break;
+            return;
         }
     }
-
-send_finalize_response:
-
-    if (resp.err == NetworkCodes::netErrSocketClosedByRemote && resp.bytesSent > 0) resp.err = 0;
 }
 
 void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffer* receivePayload,
@@ -897,7 +893,6 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
                                        : withRetry(recv, sock, recvBuf, recvSize, flags);
 
         if (recvResult == 0) {
-            resp.err = NetworkCodes::netErrSocketClosedByRemote;
             break;
         } else if (recvResult != -1) {
             receivePayload->size += recvResult;
@@ -940,10 +935,6 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
     }
 
 receive_finalize_response:
-
-    if (resp.err == NetworkCodes::netErrSocketClosedByRemote && receivePayload->size > 0) {
-        resp.err = 0;
-    }
 
     if (receivePayload->size > receiveLen) {
         cerr << "BUG: receive buffer overflow" << endl;
