@@ -14,7 +14,7 @@ using SessionsT = unordered_map<uint32_t, unique_ptr<NetworkSession>>;
 using TerminatingSessionsT = unordered_set<unique_ptr<NetworkSession>>;
 
 namespace {
-    void defaultResultCb(uint32_t sessiondId, const uint8_t* data, size_t len, void* context) {}
+    void defaultResultCb(uint32_t, const uint8_t*, size_t, void*) {}
 
     net_RpcResultCb resultCb = defaultResultCb;
     void* resultCbContext = nullptr;

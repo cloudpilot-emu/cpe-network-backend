@@ -1261,8 +1261,7 @@ void NetworkSession::SendResponse(MsgResponse& response, size_t size) {
     resultCb(rpcResponse.data(), stream.bytes_written);
 }
 
-bool NetworkSession::bufferDecodeCb(pb_istream_t* stream, const pb_field_iter_t* field,
-                                    void** arg) {
+bool NetworkSession::bufferDecodeCb(pb_istream_t* stream, const pb_field_iter_t*, void** arg) {
     if (!arg) return false;
     auto buffer = reinterpret_cast<Buffer*>(*arg);
 
@@ -1272,8 +1271,7 @@ bool NetworkSession::bufferDecodeCb(pb_istream_t* stream, const pb_field_iter_t*
     return pb_read(stream, buffer->data.get(), buffer->size);
 }
 
-bool NetworkSession::payloadDecodeCb(pb_istream_t* stream, const pb_field_iter_t* field,
-                                     void** arg) {
+bool NetworkSession::payloadDecodeCb(pb_istream_t*, const pb_field_iter_t* field, void** arg) {
     if (!arg) return false;
     if (field->tag != MsgRequest_socketSendRequest_tag) return true;
 
