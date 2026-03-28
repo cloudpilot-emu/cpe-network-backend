@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -23,6 +24,8 @@ namespace {
 
     SessionsT sessions;
     TerminatingSessionsT terminatingSessions;
+
+    mutex apiMutex;
 
     void cleanupTerminatedSessions() {
         auto it = terminatingSessions.begin();
@@ -48,6 +51,8 @@ void net_setRpcCallback(net_RpcResultCb resultCb, void* context) {
 }
 
 uint32_t net_openSession() {
+    lock_guard<mutex> lock(apiMutex);
+
     cleanupTerminatedSessions();
 
     const uint32_t sessionId = nextSessionId++;
@@ -62,6 +67,8 @@ uint32_t net_openSession() {
 }
 
 void net_closeSession(uint32_t sessionId) {
+    lock_guard<mutex> lock(apiMutex);
+
     const auto it = sessions.find(sessionId);
     if (sessions.find(sessionId) == sessions.end()) {
         cerr << "unable to close session: invalid session ID " << sessionId << endl;
@@ -72,6 +79,8 @@ void net_closeSession(uint32_t sessionId) {
 }
 
 void net_closeAllSessions() {
+    lock_guard<mutex> lock(apiMutex);
+
     auto it = sessions.begin();
 
     while (it != sessions.end()) {
@@ -81,8 +90,9 @@ void net_closeAllSessions() {
 }
 
 bool net_dispatchRpc(uint32_t sessionId, const uint8_t* data, size_t len) {
-    cleanupTerminatedSessions();
+    lock_guard<mutex> lock(apiMutex);
 
+    cleanupTerminatedSessions();
     const auto it = sessions.find(sessionId);
     if (sessions.find(sessionId) == sessions.end()) {
         cerr << "unable to dispatch RPC message: invalid session ID " << sessionId << endl;

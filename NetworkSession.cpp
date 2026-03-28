@@ -973,6 +973,10 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
 
         case NetworkCodes::netSettingSecondaryDNS:
         case NetworkCodes::netSettingRTSecondaryDNS: {
+#if defined(__ANDROID__)
+            resp.value.uint32val = 0x08080808;
+            resp.which_value = MsgSettingGetResponse_uint32val_tag;
+#else
             if (res_init() == -1 || _res.nscount <= 0) {
                 resp.err = NetworkCodes::netErrPrefNotFound;
                 return;
@@ -995,6 +999,7 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
             }
 
             resp.which_value = MsgSettingGetResponse_uint32val_tag;
+#endif
 
             break;
         }
