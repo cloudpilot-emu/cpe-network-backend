@@ -20,7 +20,7 @@ namespace {
     net_RpcResultCb resultCb = defaultResultCb;
     void* resultCbContext = nullptr;
 
-    uint32_t nextSessionId;
+    uint32_t nextSessionId = 0;
 
     SessionsT sessions;
     TerminatingSessionsT terminatingSessions;
