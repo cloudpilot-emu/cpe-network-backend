@@ -44,14 +44,6 @@ using namespace std;
     #define HAVE_SIN_LEN
 #endif
 
-#ifndef AI_V4MAPPED_CFG
-    #define AI_V4MAPPED_CFG AI_V4MAPPED
-#endif
-
-#ifndef AI_DEFAULT
-    #define AI_DEFAULT (AI_V4MAPPED_CFG | AI_ADDRCONFIG)
-#endif
-
 namespace {
     constexpr size_t INITIAL_SIZE_REQUEST = 1024;
     constexpr size_t INITIAL_SIZE_RESPONSE = 1024;
@@ -158,9 +150,13 @@ namespace {
 
         memset(&hints, 0, sizeof(hints));
         hints.ai_family = PF_UNSPEC;
-        hints.ai_flags = AI_DEFAULT | AI_NUMERICHOST | AI_NUMERICSERV;
+        hints.ai_flags = AI_NUMERICSERV;
 
-        const int gaierr = getaddrinfo(ip.str().c_str(), port.str().c_str(), nullptr, &result);
+#if defined(AI_DEFAULT) && !defined(__ANDROID__)
+        hints.ai_flags |= AI_DEFAULT;
+#endif
+
+        const int gaierr = getaddrinfo(ip.str().c_str(), port.str().c_str(), &hints, &result);
 
         if (gaierr != 0) {
             cerr << "failed to translate " << ip.str() << " : " << gai_strerror(gaierr) << endl;
@@ -1020,7 +1016,7 @@ void NetworkSession::HandleGetHostByName(MsgGetHostByNameRequest& request, MsgRe
     memset(&hints, 0, sizeof(hints));
 
     hints.ai_family = AF_INET;
-    hints.ai_flags = AI_DEFAULT | AI_CANONNAME;
+    hints.ai_flags = AI_CANONNAME;
 
     const int gaierr = getaddrinfo(request.name, nullptr, &hints, &result);
     if (gaierr != 0) {
@@ -1078,7 +1074,7 @@ void NetworkSession::HandleGetServByName(MsgGetServByNameRequest& request, MsgRe
     memset(&hints, 0, sizeof(hints));
 
     hints.ai_family = AF_INET;
-    hints.ai_flags = AI_DEFAULT;
+    hints.ai_flags = AI_ADDRCONFIG;
 
     if (strncmp(request.protocol, "tcp", sizeof(request.protocol)) == 0) {
         hints.ai_protocol = IPPROTO_TCP;
