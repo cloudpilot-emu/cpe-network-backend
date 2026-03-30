@@ -150,11 +150,7 @@ namespace {
 
         memset(&hints, 0, sizeof(hints));
         hints.ai_family = PF_UNSPEC;
-        hints.ai_flags = AI_NUMERICSERV;
-
-#if defined(AI_DEFAULT) && !defined(__ANDROID__)
-        hints.ai_flags |= AI_DEFAULT;
-#endif
+        hints.ai_flags = AI_NUMERICSERV | AI_ADDRCONFIG;
 
         const int gaierr = getaddrinfo(ip.str().c_str(), port.str().c_str(), &hints, &result);
 
@@ -1074,7 +1070,11 @@ void NetworkSession::HandleGetServByName(MsgGetServByNameRequest& request, MsgRe
     memset(&hints, 0, sizeof(hints));
 
     hints.ai_family = AF_INET;
-    hints.ai_flags = AI_ADDRCONFIG;
+#ifdef AI_UNUSABLE
+    hints.ai_flags = AI_UNUSABLE;
+#else
+    hints.ai_flags = 0;
+#endif
 
     if (strncmp(request.protocol, "tcp", sizeof(request.protocol)) == 0) {
         hints.ai_protocol = IPPROTO_TCP;
