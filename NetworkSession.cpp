@@ -120,7 +120,8 @@ namespace {
     }
 
     bool encodeSockaddrIp(const sockaddr* saddr, uint32_t& addr, socklen_t len) {
-        if (len < sizeof(sockaddr_in) || saddr->sa_family != AF_INET) return false;
+        if (static_cast<size_t>(len) < sizeof(sockaddr_in) || saddr->sa_family != AF_INET)
+            return false;
         const auto saddr4 = reinterpret_cast<const sockaddr_in*>(saddr);
 
         addr = ntohl(saddr4->sin_addr.s_addr);
@@ -301,6 +302,12 @@ bool NetworkSession::DispatchRpc(const uint8_t* data, size_t len) {
     dispatchCv.notify_one();
 
     return true;
+}
+
+void NetworkSession::SetDnsServers(uint32_t primary, uint32_t secondary) {
+    unique_lock lock(dnsSettingsMutex);
+
+    dnsSettings = {.primary = primary, .secondary = secondary};
 }
 
 bool NetworkSession::HasTerminated() { return !hasStarted || hasTerminated; }
@@ -965,10 +972,7 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
 
         case NetworkCodes::netSettingSecondaryDNS:
         case NetworkCodes::netSettingRTSecondaryDNS: {
-#if defined(__ANDROID__)
-            resp.value.uint32val = 0x08080808;
-            resp.which_value = MsgSettingGetResponse_uint32val_tag;
-#else
+#ifndef __ANDROID__
             if (res_init() == -1 || _res.nscount <= 0) {
                 resp.err = NetworkCodes::netErrPrefNotFound;
                 return;
@@ -991,6 +995,19 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
             }
 
             resp.which_value = MsgSettingGetResponse_uint32val_tag;
+#else
+
+            resp.value.uint32val = 0;
+            if (dnsSettings.has_value()) {
+                resp.value.uint32val =
+                    dnsLevel == 1 ? dnsSettings->primary : dnsSettings->secondary;
+            }
+
+            if (resp.value.uint32val == 0) {
+                resp.err = NetworkCodes::netErrPrefNotFound;
+            } else {
+                resp.which_value = MsgSettingGetResponse_uint32val_tag;
+            }
 #endif
 
             break;

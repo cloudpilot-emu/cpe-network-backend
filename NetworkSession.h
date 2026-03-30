@@ -14,6 +14,11 @@
 
 #include "networking.pb.h"
 
+struct DnsSettings {
+    uint32_t primary;
+    uint32_t secondary;
+};
+
 class NetworkSession {
    public:
     using RpcResultCb = std::function<void(const uint8_t* data, size_t len)>;
@@ -25,6 +30,8 @@ class NetworkSession {
     void Terminate();
 
     bool DispatchRpc(const uint8_t* data, size_t len);
+
+    void SetDnsServers(uint32_t primary, uint32_t secondary);
 
     bool HasTerminated();
 
@@ -95,6 +102,9 @@ class NetworkSession {
     std::atomic_bool hasTerminated{false};
 
     std::array<std::optional<SocketContext>, MAX_HANDLE + 1> sockets;
+
+    std::optional<DnsSettings> dnsSettings{std::nullopt};
+    std::mutex dnsSettingsMutex;
 
    private:
     NetworkSession(const NetworkSession&) = delete;

@@ -101,3 +101,15 @@ bool net_dispatchRpc(uint32_t sessionId, const uint8_t* data, size_t len) {
 
     return it->second->DispatchRpc(data, len);
 }
+
+void net_setDnsServers(uint32_t sessionId, uint32_t primary, uint32_t secondary) {
+    lock_guard<mutex> lock(apiMutex);
+
+    const auto it = sessions.find(sessionId);
+    if (sessions.find(sessionId) == sessions.end()) {
+        cerr << "unable to set DNS: invalid session ID " << sessionId << endl;
+        return;
+    }
+
+    it->second->SetDnsServers(primary, secondary);
+}

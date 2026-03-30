@@ -21,6 +21,8 @@ void net_closeAllSessions();
 
 bool net_dispatchRpc(uint32_t sessionId, const uint8_t* data, size_t len);
 
+void net_setDnsServers(uint32_t sessionId, uint32_t primary, uint32_t secondary);
+
 #ifdef __cplusplus
 }
 #endif
