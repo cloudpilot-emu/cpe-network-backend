@@ -996,11 +996,15 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
 
             resp.which_value = MsgSettingGetResponse_uint32val_tag;
 #else
-
             resp.value.uint32val = 0;
-            if (dnsSettings.has_value()) {
-                resp.value.uint32val =
-                    dnsLevel == 1 ? dnsSettings->primary : dnsSettings->secondary;
+
+            {
+                unique_lock lock(dnsSettingsMutex);
+
+                if (dnsSettings.has_value()) {
+                    resp.value.uint32val =
+                        dnsLevel == 1 ? dnsSettings->primary : dnsSettings->secondary;
+                }
             }
 
             if (resp.value.uint32val == 0) {
