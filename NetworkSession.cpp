@@ -972,6 +972,23 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
 
         case NetworkCodes::netSettingSecondaryDNS:
         case NetworkCodes::netSettingRTSecondaryDNS: {
+            {
+                unique_lock lock(dnsSettingsMutex);
+
+                if (dnsSettings.has_value()) {
+                    resp.value.uint32val =
+                        dnsLevel == 1 ? dnsSettings->primary : dnsSettings->secondary;
+
+                    if (resp.value.uint32val == 0) {
+                        resp.err = NetworkCodes::netErrPrefNotFound;
+                    } else {
+                        resp.which_value = MsgSettingGetResponse_uint32val_tag;
+                    }
+
+                    return;
+                }
+            }
+
 #ifndef __ANDROID__
             if (res_init() == -1 || _res.nscount <= 0) {
                 resp.err = NetworkCodes::netErrPrefNotFound;
@@ -989,30 +1006,13 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
                 if (++hits == dnsLevel) break;
             }
 
-            if (!found) {
-                resp.err = NetworkCodes::netErrPrefNotFound;
+            if (found) {
+                resp.which_value = MsgSettingGetResponse_uint32val_tag;
                 return;
             }
-
-            resp.which_value = MsgSettingGetResponse_uint32val_tag;
-#else
-            resp.value.uint32val = 0;
-
-            {
-                unique_lock lock(dnsSettingsMutex);
-
-                if (dnsSettings.has_value()) {
-                    resp.value.uint32val =
-                        dnsLevel == 1 ? dnsSettings->primary : dnsSettings->secondary;
-                }
-            }
-
-            if (resp.value.uint32val == 0) {
-                resp.err = NetworkCodes::netErrPrefNotFound;
-            } else {
-                resp.which_value = MsgSettingGetResponse_uint32val_tag;
-            }
 #endif
+
+            resp.err = NetworkCodes::netErrPrefNotFound;
 
             break;
         }
