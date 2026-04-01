@@ -1,9 +1,11 @@
 #include "NetworkSession.h"
 
 #ifdef _WIN32
-    #include <iphlpapi.h>
+// clang-format off
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #include <iphlpapi.h>
+// clang-format on
 #else
     #include <arpa/inet.h>
     #include <arpa/nameser.h>
@@ -269,7 +271,8 @@ namespace {
 
         if (withRetry(getsockopt, sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err),
                       &len) == -1) {
-            cerr << "unable to retrieve socket error: " << SOCK_ERRNO << endl;
+            auto const err = SOCK_ERRNO;
+            cerr << "unable to retrieve socket error: " << err << endl;
 
             return NetworkCodes::netErrInternal;
         }
@@ -523,7 +526,8 @@ void NetworkSession::HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse
     }
 
     if (!setNonBlocking(sock)) {
-        cerr << "failed to set socket non-blocking: " << SOCK_ERRNO << endl;
+        auto const err = SOCK_ERRNO;
+        cerr << "failed to set socket non-blocking: " << err << endl;
         closeSocket(sock);
 
         resp.err = NetworkCodes::netErrInternal;
@@ -741,11 +745,13 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
         {.fd = sock, .events = POLLERR | POLLHUP | POLLRDNORM | POLLWRNORM, .revents = 0}};
 
     switch (withRetry(poll, fds, 1, normalizeTimeout(request.timeout))) {
-        case -1:
-            cerr << "poll failed during connect: " << SOCK_ERRNO << endl;
+        case -1: {
+            auto const err = SOCK_ERRNO;
+            cerr << "poll failed during connect: " << err << endl;
+
             resp.err = NetworkCodes::netErrInternal;
             return;
-
+        }
         case 0:
             resp.err = NetworkCodes::netErrTimeout;
             return;
@@ -861,12 +867,12 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
         const size_t sendSize = sendPayload.size - resp.bytesSent;
 
 #ifdef _WIN32
-        const ssize_t sendResult = request.has_address
-                                       ? withRetry(sendto, sock, static_cast<const char*>(sendBuf),
-                                                   static_cast<int>(sendSize), flags, saddr.get(),
-                                                   static_cast<int>(saddrLen))
-                                       : withRetry(send, sock, static_cast<const char*>(sendBuf),
-                                                   static_cast<int>(sendSize), flags);
+        const int sendResult = request.has_address
+                                   ? withRetry(sendto, sock, static_cast<const char*>(sendBuf),
+                                               static_cast<int>(sendSize), flags, saddr.get(),
+                                               static_cast<int>(saddrLen))
+                                   : withRetry(send, sock, static_cast<const char*>(sendBuf),
+                                               static_cast<int>(sendSize), flags);
 #else
         const ssize_t sendResult =
             request.has_address
@@ -893,11 +899,13 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
         fds[0].events = POLLERR | POLLHUP | ((flags & MSG_OOB) ? POLLWRBAND : POLLWRNORM);
 
         switch (withRetry(poll, fds, 1, static_cast<int>(timeout - (now - timestampStart)))) {
-            case -1:
-                cerr << "poll failed during send: " << SOCK_ERRNO << endl;
+            case -1: {
+                auto const err = SOCK_ERRNO;
+                cerr << "poll failed during send: " << err << endl;
+
                 resp.err = NetworkCodes::netErrInternal;
                 return;
-
+            }
             case 0:
                 if (resp.bytesSent == 0) resp.err = NetworkCodes::netErrTimeout;
                 return;
@@ -948,7 +956,7 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
         socklen_t saddrLen = sizeof(saddr);
 
 #ifdef _WIN32
-        const ssize_t recvResult =
+        const int recvResult =
             request.addressRequested
                 ? withRetry(recvfrom, sock, static_cast<char*>(recvBuf), static_cast<int>(recvSize),
                             flags, reinterpret_cast<sockaddr*>(&saddr), &saddrLen)
@@ -984,9 +992,12 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
         const int pollResult =
             withRetry(poll, fds, 1, static_cast<int>(timeout - (now - timestampStart)));
 
+        int err;
         switch (pollResult) {
             case -1:
-                cerr << "poll failed during read: " << SOCK_ERRNO << endl;
+                err = SOCK_ERRNO;
+                cerr << "poll failed during read: " << err << endl;
+
                 resp.err = NetworkCodes::netErrInternal;
                 goto receive_finalize_response;
 
@@ -1308,11 +1319,13 @@ void NetworkSession::HandleSocketAccept(MsgSocketAcceptRequest& request, MsgResp
     fds[0] = {.fd = sock, .events = POLLERR | POLLRDNORM, .revents = 0};
 
     switch (withRetry(poll, fds, 1, normalizeTimeout(request.timeout))) {
-        case -1:
-            cerr << "poll failed during accept: " << SOCK_ERRNO << endl;
+        case -1: {
+            auto const err = SOCK_ERRNO;
+            cerr << "poll failed during accept: " << err << endl;
+
             resp.err = NetworkCodes::netErrInternal;
             return;
-
+        }
         case 0:
             resp.err = NetworkCodes::netErrTimeout;
             return;

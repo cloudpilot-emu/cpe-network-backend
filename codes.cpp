@@ -5,9 +5,8 @@
     #include <ws2tcpip.h>
 #else
     #include <netdb.h>
+    #include <sys/socket.h>
 #endif
-
-#include <sys/socket.h>
 
 #include <cerrno>
 #include <iostream>
