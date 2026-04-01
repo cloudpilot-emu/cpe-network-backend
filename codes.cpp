@@ -1,11 +1,102 @@
 #include "codes.h"
 
-#include <netdb.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <netdb.h>
+#endif
+
+#include <sys/socket.h>
 
 #include <cerrno>
 #include <iostream>
 
 using namespace std;
+
+#ifdef _WIN32
+
+uint16_t NetworkCodes::errnoToPalm(int err) {
+    switch (err) {
+        case WSAEINTR:
+            return netErrUserCancel;
+
+        case WSAENOMEM:
+        case WSAENOBUFS:
+            return netErrOutOfMemory;
+
+        case WSAEACCES:
+            return netErrAuthFailure;
+
+        case WSAEWOULDBLOCK:
+            return netErrWouldBlock;
+
+        case WSAEINPROGRESS:
+            return netErrWouldBlock;
+
+        case WSAEALREADY:
+            return netErrAlreadyInProgress;
+
+        case WSAENOTSOCK:
+            return netErrNoSocket;
+
+        case WSAEDESTADDRREQ:
+            return netErrIPNoDst;
+
+        case WSAEMSGSIZE:
+            return netErrMessageTooBig;
+
+        case WSAENOPROTOOPT:
+        case WSAEPROTONOSUPPORT:
+            return netErrUnknownProtocol;
+
+        case WSAESOCKTNOSUPPORT:
+        case WSAEOPNOTSUPP:
+            return netErrWrongSocketType;
+
+        case WSAEPFNOSUPPORT:
+        case WSAEAFNOSUPPORT:
+            return netErrUnknownService;
+
+        case WSAEADDRINUSE:
+        case WSAEADDRNOTAVAIL:
+            return netErrPortInUse;
+
+        case WSAENETDOWN:
+            return netErrUnreachableDest;
+
+        case WSAENETUNREACH:
+            return netErrNoInterfaces;
+
+        case WSAENETRESET:
+        case WSAECONNABORTED:
+        case WSAECONNRESET:
+            return netErrSocketClosedByRemote;
+
+        case WSAEISCONN:
+            return netErrSocketAlreadyConnected;
+
+        case WSAENOTCONN:
+            return netErrSocketNotConnected;
+
+        case WSAESHUTDOWN:
+            return netErrSocketNotOpen;
+
+        case WSAETIMEDOUT:
+        case WSAECONNREFUSED:
+            return netErrTimeout;
+
+        case WSAEHOSTDOWN:
+        case WSAEHOSTUNREACH:
+            return netErrIPNoRoute;
+
+        default:
+            cerr << "unhandled WSA error " << err << " mapped to netErrInternal" << endl;
+            return netErrInternal;
+    }
+}
+
+#else
 
 uint16_t NetworkCodes::errnoToPalm(int err) {
     if (err == EWOULDBLOCK) return netErrWouldBlock;
@@ -119,6 +210,8 @@ uint16_t NetworkCodes::errnoToPalm(int err) {
     }
 }
 
+#endif
+
 uint16_t NetworkCodes::gaiErrorToPalm(int err) {
     switch (err) {
         case EAI_NONAME:
@@ -130,8 +223,10 @@ uint16_t NetworkCodes::gaiErrorToPalm(int err) {
         case EAI_FAIL:
             return netErrDNSRefused;
 
+#ifdef EAI_NODATA
         case EAI_NODATA:
             return netErrDNSNonexistantName;
+#endif
 
         default:
             return netErrInternal;

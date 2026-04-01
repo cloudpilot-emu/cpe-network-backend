@@ -1,7 +1,12 @@
 #ifndef _NETWORK_SOCKOPT_H_
 #define _NETWORK_SOCKOPT_H_
 
-#include <sys/socket.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <sys/socket.h>
+#endif
 
 #include <cstddef>
 #include <cstdint>

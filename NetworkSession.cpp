@@ -1,17 +1,23 @@
 #include "NetworkSession.h"
 
-#include <arpa/inet.h>
-#include <arpa/nameser.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <resolv.h>
-#include <signal.h>
-#include <sys/param.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
+#ifdef _WIN32
+    #include <iphlpapi.h>
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <arpa/inet.h>
+    #include <arpa/nameser.h>
+    #include <fcntl.h>
+    #include <netdb.h>
+    #include <netinet/in.h>
+    #include <poll.h>
+    #include <resolv.h>
+    #include <signal.h>
+    #include <sys/param.h>
+    #include <sys/socket.h>
+    #include <sys/types.h>
+    #include <unistd.h>
+#endif
 
 #include <cerrno>
 #include <chrono>
@@ -29,6 +35,32 @@
 #include "sockopt.h"
 
 using namespace std;
+
+#ifdef _WIN32
+    #define poll WSAPoll
+
+    #define SHUT_RD SD_RECEIVE
+    #define SHUT_WR SD_SEND
+    #define SHUT_RDWR SD_BOTH
+
+    #define SOCK_ERRNO WSAGetLastError()
+
+    #define SOCK_EINTR WSAEINTR
+    #define SOCK_EINPROGRESS WSAEINPROGRESS
+    #define SOCK_EALREADY WSAEALREADY
+    #define SOCK_EAGAIN WSAEWOULDBLOCK
+    #define SOCK_EWOULDBLOCK WSAEWOULDBLOCK
+    #define SOCK_EPIPE WSAECONNRESET
+#else
+    #define SOCK_ERRNO errno
+
+    #define SOCK_EINTR EINTR
+    #define SOCK_EINPROGRESS EINPROGRESS
+    #define SOCK_EALREADY EALREADY
+    #define SOCK_EAGAIN EAGAIN
+    #define SOCK_EWOULDBLOCK EWOULDBLOCK
+    #define SOCK_EPIPE EPIPE
+#endif
 
 #ifdef NETWORK_BACKEND_LOGGING
     #define LOGGING
@@ -68,13 +100,26 @@ namespace {
     };
 
     template <typename F, typename... Ts>
-    int withRetry(F fn, Ts... args) {
-        int result;
+    auto withRetry(F fn, Ts... args) {
+        decltype(fn(args...)) result;
         do {
             result = fn(args...);
-        } while (result == -1 && errno == EINTR);
+        } while (result == -1 && SOCK_ERRNO == SOCK_EINTR);
 
         return result;
+    }
+
+    int closeSocket(sock_t sock) {
+#ifdef _WIN32
+        return closesocket(sock);
+#elif defined(__APPLE__)
+        return withRetry(close, sock);
+#else
+        const int result = close(sock);
+        if (result == -1 && errno == EINTR) return 0;
+
+        return result;
+#endif
     }
 
     int mapSocketType(uint32_t palmType) {
@@ -204,21 +249,27 @@ namespace {
         return unique_ptr<sockaddr>(reinterpret_cast<sockaddr*>(addrClone));
     }
 
-    bool setNonBlocking(int sock) {
+    bool setNonBlocking(sock_t sock) {
+#ifdef _WIN32
+        u_long mode = 1;
+        return ioctlsocket(sock, FIONBIO, &mode) == 0;
+#else
         int flags = withRetry(fcntl, sock, F_GETFL);
         if (flags == -1) return false;
 
         flags |= O_NONBLOCK;
 
         return withRetry(fcntl, sock, F_SETFL, flags) != -1;
+#endif
     }
 
-    uint16_t getSocketError(int sock) {
+    uint16_t getSocketError(sock_t sock) {
         int err;
         socklen_t len = sizeof(err);
 
-        if (withRetry(getsockopt, sock, SOL_SOCKET, SO_ERROR, &err, &len) == -1) {
-            cerr << "unable to retrieve socket error: " << errno << endl;
+        if (withRetry(getsockopt, sock, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err),
+                      &len) == -1) {
+            cerr << "unable to retrieve socket error: " << SOCK_ERRNO << endl;
 
             return NetworkCodes::netErrInternal;
         }
@@ -264,7 +315,9 @@ NetworkSession::NetworkSession(RpcResultCb resultCb)
 void NetworkSession::Start() {
     if (hasStarted) return;
 
+#ifndef _WIN32
     signal(SIGPIPE, SIG_IGN);
+#endif
 
     worker = thread(bind(&NetworkSession::WorkerMain, this));
     hasStarted = true;
@@ -343,7 +396,7 @@ void NetworkSession::WorkerMain() {
         LOG("cleaning out socket %i\n", ctx->sock);
 
         withRetry(shutdown, ctx->sock, SHUT_RDWR);
-        withRetry(close, ctx->sock);
+        closeSocket(ctx->sock);
     }
 
     worker.detach();
@@ -464,15 +517,15 @@ void NetworkSession::HandleSocketOpen(MsgSocketOpenRequest& request, MsgResponse
         return;
     }
 
-    int sock = withRetry(socket, AF_INET, socketType, 0);
-    if (sock == -1) {
-        resp.err = NetworkCodes::errnoToPalm(errno);
+    auto sock = withRetry(socket, AF_INET, socketType, 0);
+    if (sock == INVALID_SOCK) {
+        resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
         return;
     }
 
     if (!setNonBlocking(sock)) {
-        cerr << "failed to set socket non-blocking: " << errno << endl;
-        close(sock);
+        cerr << "failed to set socket non-blocking: " << SOCK_ERRNO << endl;
+        closeSocket(sock);
 
         resp.err = NetworkCodes::netErrInternal;
         return;
@@ -490,8 +543,8 @@ void NetworkSession::HandleSocketClose(MsgSocketCloseRequest& request, MsgRespon
 
     LOG("SocketClose handle %i\n", request.handle);
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrInternal;
         return;
     }
@@ -499,8 +552,8 @@ void NetworkSession::HandleSocketClose(MsgSocketCloseRequest& request, MsgRespon
     sockets[request.handle] = nullopt;
 
     withRetry(shutdown, sock, SHUT_RDWR);
-    if (withRetry(close, sock) == -1) {
-        resp.err = NetworkCodes::errnoToPalm(errno);
+    if (closeSocket(sock) == -1) {
+        resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
     }
 }
 
@@ -511,8 +564,8 @@ void NetworkSession::HandleSocketOptionSet(MsgSocketOptionSetRequest& request,
 
     resp.err = 0;
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
     }
@@ -535,9 +588,9 @@ void NetworkSession::HandleSocketOptionSet(MsgSocketOptionSetRequest& request,
         return;
     }
 
-    if (withRetry(setsockopt, sock, parameters.level, parameters.name, &parameters.payload,
-                  parameters.len) == -1) {
-        resp.err = NetworkCodes::errnoToPalm(errno);
+    if (withRetry(setsockopt, sock, parameters.level, parameters.name,
+                  reinterpret_cast<const char*>(&parameters.payload), parameters.len) == -1) {
+        resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
     }
 }
 
@@ -548,8 +601,8 @@ void NetworkSession::HandleSocketOptionGet(MsgSocketOptionGetRequest& request,
 
     resp.err = 0;
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
     }
@@ -568,9 +621,9 @@ void NetworkSession::HandleSocketOptionGet(MsgSocketOptionGetRequest& request,
         return;
     }
 
-    if (withRetry(getsockopt, sock, parameters.level, parameters.name, &parameters.payload,
-                  &parameters.len) == 1) {
-        resp.err = NetworkCodes::errnoToPalm(errno);
+    if (withRetry(getsockopt, sock, parameters.level, parameters.name,
+                  reinterpret_cast<char*>(&parameters.payload), &parameters.len) == -1) {
+        resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
         return;
     }
 
@@ -593,8 +646,8 @@ void NetworkSession::HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse
     });
 #endif
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
     }
@@ -604,7 +657,7 @@ void NetworkSession::HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse
         socklen_t addrLen = sizeof(addr);
 
         if (withRetry(getsockname, sock, &addr, &addrLen) == -1) {
-            resp.err = NetworkCodes::errnoToPalm(errno);
+            resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
             return;
         }
 
@@ -621,7 +674,7 @@ void NetworkSession::HandleSocketAddr(MsgSocketAddrRequest& request, MsgResponse
         socklen_t addrLen = sizeof(addr);
 
         if (withRetry(getpeername, sock, &addr, &addrLen) == -1) {
-            resp.err = NetworkCodes::errnoToPalm(errno);
+            resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
             return;
         }
 
@@ -640,8 +693,8 @@ void NetworkSession::HandleSocketBind(MsgSocketBindRequest& request, MsgResponse
 
     resp.err = 0;
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
     }
@@ -650,7 +703,7 @@ void NetworkSession::HandleSocketBind(MsgSocketBindRequest& request, MsgResponse
     decodeSockaddr(request.address, saddr);
 
     if (withRetry(::bind, sock, reinterpret_cast<sockaddr*>(&saddr), sizeof(saddr)) == -1) {
-        resp.err = NetworkCodes::errnoToPalm(errno);
+        resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
     }
 }
 
@@ -663,8 +716,8 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
     LOG("SocketConnect to %s handle %i timeout %i\n", formatAddress(request.address).c_str(),
         request.handle, request.timeout);
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
     }
@@ -680,8 +733,8 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
 
     if (withRetry(connect, sock, reinterpret_cast<sockaddr*>(saddr.get()), saddrLen) == 0) return;
 
-    if ((errno != EINPROGRESS && errno != EALREADY) || !ctx.blocking) {
-        resp.err = NetworkCodes::errnoToPalm(errno);
+    if ((SOCK_ERRNO != SOCK_EINPROGRESS && SOCK_ERRNO != SOCK_EALREADY) || !ctx.blocking) {
+        resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
         return;
     }
 
@@ -690,7 +743,7 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
 
     switch (withRetry(poll, fds, 1, normalizeTimeout(request.timeout))) {
         case -1:
-            cerr << "poll failed during connect: " << errno << endl;
+            cerr << "poll failed during connect: " << SOCK_ERRNO << endl;
             resp.err = NetworkCodes::netErrInternal;
             return;
 
@@ -724,8 +777,8 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
         const uint32_t mask = static_cast<uint32_t>(1) << handle;
         if ((fdmask & mask) == 0) continue;
 
-        const int fd = SocketForHandle(handle);
-        if (fd == -1) continue;
+        const sock_t fd = SocketForHandle(handle);
+        if (fd == INVALID_SOCK) continue;
 
         fds[fdcnt] = {.fd = fd, .events = 0, .revents = 0};
         if (mask & request.readFDs) fds[fdcnt].events |= POLLRDNORM;
@@ -737,7 +790,7 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
 
     switch (withRetry(poll, fds, fdcnt, normalizeTimeout(request.timeout))) {
         case -1:
-            resp.err = NetworkCodes::errnoToPalm(errno);
+            resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
             return;
 
         default:
@@ -778,8 +831,8 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
         [&]() { LOG("SocketSend result bytesSend %i err %i\n", resp.bytesSent, resp.err); });
 #endif
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
     }
@@ -808,15 +861,24 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
         const void* sendBuf = sendPayload.data.get() + resp.bytesSent;
         const size_t sendSize = sendPayload.size - resp.bytesSent;
 
+#ifdef _WIN32
+        const ssize_t sendResult = request.has_address
+                                       ? withRetry(sendto, sock, static_cast<const char*>(sendBuf),
+                                                   static_cast<int>(sendSize), flags, saddr.get(),
+                                                   static_cast<int>(saddrLen))
+                                       : withRetry(send, sock, static_cast<const char*>(sendBuf),
+                                                   static_cast<int>(sendSize), flags);
+#else
         const ssize_t sendResult =
             request.has_address
                 ? withRetry(sendto, sock, sendBuf, sendSize, flags, saddr.get(), saddrLen)
                 : withRetry(send, sock, sendBuf, sendSize, flags);
+#endif
 
         if (sendResult != -1) {
             resp.bytesSent += sendResult;
-        } else if (errno != EAGAIN || !ctx.blocking) {
-            resp.err = errno == EPIPE ? 0 : NetworkCodes::errnoToPalm(errno);
+        } else if (SOCK_ERRNO != SOCK_EAGAIN || !ctx.blocking) {
+            resp.err = SOCK_ERRNO == SOCK_EPIPE ? 0 : NetworkCodes::errnoToPalm(SOCK_ERRNO);
             return;
         }
 
@@ -831,9 +893,9 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
         pollfd fds[] = {{.fd = sock, .events = 0, .revents = 0}};
         fds[0].events = POLLERR | POLLHUP | ((flags & MSG_OOB) ? POLLWRBAND : POLLWRNORM);
 
-        switch (withRetry(poll, fds, 1, timeout - (now - timestampStart))) {
+        switch (withRetry(poll, fds, 1, static_cast<int>(timeout - (now - timestampStart)))) {
             case -1:
-                cerr << "poll failed during send: " << errno << endl;
+                cerr << "poll failed during send: " << SOCK_ERRNO << endl;
                 resp.err = NetworkCodes::netErrInternal;
                 return;
 
@@ -862,8 +924,8 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
     resp.err = 0;
     resp.has_address = false;
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
     }
@@ -886,17 +948,26 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
         const size_t recvSize = receiveLen - receivePayload->size;
         socklen_t saddrLen = sizeof(saddr);
 
+#ifdef _WIN32
+        const ssize_t recvResult =
+            request.addressRequested
+                ? withRetry(recvfrom, sock, static_cast<char*>(recvBuf), static_cast<int>(recvSize),
+                            flags, reinterpret_cast<sockaddr*>(&saddr), &saddrLen)
+                : withRetry(recv, sock, static_cast<char*>(recvBuf), static_cast<int>(recvSize),
+                            flags);
+#else
         const ssize_t recvResult = request.addressRequested
                                        ? withRetry(recvfrom, sock, recvBuf, recvSize, flags,
                                                    reinterpret_cast<sockaddr*>(&saddr), &saddrLen)
                                        : withRetry(recv, sock, recvBuf, recvSize, flags);
+#endif
 
         if (recvResult == 0) {
             break;
         } else if (recvResult != -1) {
             receivePayload->size += recvResult;
-        } else if (errno != EAGAIN || !ctx.blocking) {
-            resp.err = NetworkCodes::errnoToPalm(errno);
+        } else if (SOCK_ERRNO != SOCK_EAGAIN || !ctx.blocking) {
+            resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
             break;
         }
 
@@ -911,11 +982,12 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
         pollfd fds[] = {{.fd = sock, .events = 0, .revents = 0}};
         fds[0].events = POLLERR | POLLHUP | ((flags & MSG_OOB) ? POLLRDBAND : POLLRDNORM);
 
-        const int pollResult = withRetry(poll, fds, 1, timeout - (now - timestampStart));
+        const int pollResult =
+            withRetry(poll, fds, 1, static_cast<int>(timeout - (now - timestampStart)));
 
         switch (pollResult) {
             case -1:
-                cerr << "poll failed during read: " << errno << endl;
+                cerr << "poll failed during read: " << SOCK_ERRNO << endl;
                 resp.err = NetworkCodes::netErrInternal;
                 goto receive_finalize_response;
 
@@ -951,11 +1023,15 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
     response.which_payload = MsgResponse_settingGetResponse_tag;
     auto& resp = response.payload.settingGetResponse;
 
-    size_t dnsLevel = 2;
     switch (request.setting) {
         case NetworkCodes::netSettingHostName: {
-            if (withRetry(gethostname, resp.value.strval, sizeof(resp.value.strval)) == -1 &&
-                errno != ENAMETOOLONG) {
+            memset(resp.value.strval, 0, sizeof(resp.value.strval));
+
+            if (withRetry(gethostname, resp.value.strval, sizeof(resp.value.strval)) == -1
+#ifndef _WIN32
+                && errno != ENAMETOOLONG
+#endif
+            ) {
                 resp.err = NetworkCodes::netErrPrefNotFound;
                 return;
             }
@@ -967,59 +1043,103 @@ void NetworkSession::HandleSettingsGet(MsgSettingGetRequest& request, MsgRespons
 
         case NetworkCodes::netSettingPrimaryDNS:
         case NetworkCodes::netSettingRTPrimaryDNS:
-            dnsLevel = 1;
-            [[fallthrough]];
+            HandleSettingsGetDNS(resp, 1);
+            break;
 
         case NetworkCodes::netSettingSecondaryDNS:
-        case NetworkCodes::netSettingRTSecondaryDNS: {
-            {
-                unique_lock lock(dnsSettingsMutex);
-
-                if (dnsSettings.has_value()) {
-                    resp.value.uint32val =
-                        dnsLevel == 1 ? dnsSettings->primary : dnsSettings->secondary;
-
-                    if (resp.value.uint32val == 0) {
-                        resp.err = NetworkCodes::netErrPrefNotFound;
-                    } else {
-                        resp.which_value = MsgSettingGetResponse_uint32val_tag;
-                    }
-
-                    return;
-                }
-            }
-
-#ifndef __ANDROID__
-            if (res_init() == -1 || _res.nscount <= 0) {
-                resp.err = NetworkCodes::netErrPrefNotFound;
-                return;
-            }
-
-            bool found = false;
-            size_t hits = 0;
-            for (size_t i = 0; i < static_cast<size_t>(_res.nscount); i++) {
-                if (_res.nsaddr_list[i].sin_family != AF_INET) continue;
-
-                found = encodeSockaddrIp(reinterpret_cast<const sockaddr*>(&_res.nsaddr_list[i]),
-                                         resp.value.uint32val, sizeof(_res.nsaddr_list[i])) ||
-                        found;
-                if (++hits == dnsLevel) break;
-            }
-
-            if (found) {
-                resp.which_value = MsgSettingGetResponse_uint32val_tag;
-                return;
-            }
-#endif
-
-            resp.err = NetworkCodes::netErrPrefNotFound;
-
+        case NetworkCodes::netSettingRTSecondaryDNS:
+            HandleSettingsGetDNS(resp, 2);
             break;
-        }
 
         default:
             resp.err = NetworkCodes::netErrPrefNotFound;
     }
+}
+
+void NetworkSession::HandleSettingsGetDNS(MsgSettingGetResponse& resp, size_t dnsLevel) {
+    {
+        unique_lock lock(dnsSettingsMutex);
+
+        if (dnsSettings.has_value()) {
+            resp.value.uint32val = dnsLevel == 1 ? dnsSettings->primary : dnsSettings->secondary;
+
+            if (resp.value.uint32val == 0) {
+                resp.err = NetworkCodes::netErrPrefNotFound;
+            } else {
+                resp.which_value = MsgSettingGetResponse_uint32val_tag;
+            }
+
+            return;
+        }
+    }
+
+#ifdef _WIN32
+    ULONG bufSize = sizeof(FIXED_INFO);
+    unique_ptr<FIXED_INFO, decltype(&free)> fixedInfo(
+        reinterpret_cast<FIXED_INFO*>(malloc(bufSize)), free);
+
+    if (!fixedInfo) {
+        resp.err = NetworkCodes::netErrPrefNotFound;
+        return;
+    }
+
+    DWORD dwRet = GetNetworkParams(fixedInfo.get(), &bufSize);
+    if (dwRet == ERROR_BUFFER_OVERFLOW) {
+        fixedInfo.reset(reinterpret_cast<FIXED_INFO*>(malloc(bufSize)));
+        if (!fixedInfo) {
+            resp.err = NetworkCodes::netErrPrefNotFound;
+            return;
+        }
+        dwRet = GetNetworkParams(fixedInfo.get(), &bufSize);
+    }
+
+    if (dwRet != NO_ERROR) {
+        resp.err = NetworkCodes::netErrPrefNotFound;
+        return;
+    }
+
+    bool found = false;
+    size_t hits = 0;
+    IP_ADDR_STRING* pAddr = &fixedInfo->DnsServerList;
+    while (pAddr) {
+        unsigned long ip = inet_addr(pAddr->IpAddress.String);
+        if (ip != INADDR_NONE && ip != 0) {
+            resp.value.uint32val = ntohl(ip);
+            found = true;
+            if (++hits == dnsLevel) break;
+        }
+        pAddr = pAddr->Next;
+    }
+
+    if (found) {
+        resp.which_value = MsgSettingGetResponse_uint32val_tag;
+        return;
+    }
+#elif !defined(__ANDROID__)
+    if (res_init() == -1 || _res.nscount <= 0) {
+        resp.err = NetworkCodes::netErrPrefNotFound;
+        return;
+    }
+
+    bool found = false;
+    size_t hits = 0;
+    for (size_t i = 0; i < static_cast<size_t>(_res.nscount); i++) {
+        if (_res.nsaddr_list[i].sin_family != AF_INET) continue;
+
+        found = encodeSockaddrIp(reinterpret_cast<const sockaddr*>(&_res.nsaddr_list[i]),
+                                 resp.value.uint32val, sizeof(_res.nsaddr_list[i])) ||
+                found;
+        if (++hits == dnsLevel) break;
+    }
+
+    if (found) {
+        resp.which_value = MsgSettingGetResponse_uint32val_tag;
+        return;
+    }
+
+#endif
+
+    resp.err = NetworkCodes::netErrPrefNotFound;
 }
 
 void NetworkSession::HandleGetHostByName(MsgGetHostByNameRequest& request, MsgResponse& response) {
@@ -1131,14 +1251,14 @@ void NetworkSession::HandleSocketShutdown(MsgSocketShutdownRequest& request,
 
     resp.err = 0;
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
     }
 
     if (withRetry(shutdown, sock, shutdownHow(request.direction)) == -1) {
-        resp.err = NetworkCodes::errnoToPalm(errno);
+        resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
     }
 }
 
@@ -1148,14 +1268,14 @@ void NetworkSession::HandleSocketListen(MsgSocketListenRequest& request, MsgResp
 
     resp.err = 0;
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
     }
 
     if (withRetry(listen, sock, request.backlog) == -1) {
-        resp.err = NetworkCodes::errnoToPalm(errno);
+        resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
     }
 }
 
@@ -1166,8 +1286,8 @@ void NetworkSession::HandleSocketAccept(MsgSocketAcceptRequest& request, MsgResp
     resp.err = 0;
     resp.handle = 0;
 
-    const int sock = SocketForHandle(request.handle);
-    if (sock == -1) {
+    const sock_t sock = SocketForHandle(request.handle);
+    if (sock == INVALID_SOCK) {
         resp.err = NetworkCodes::netErrParamErr;
         return;
     }
@@ -1177,12 +1297,12 @@ void NetworkSession::HandleSocketAccept(MsgSocketAcceptRequest& request, MsgResp
     sockaddr_in addr;
     socklen_t addrLen = sizeof(addr);
 
-    int incomingSock = withRetry(accept, sock, reinterpret_cast<sockaddr*>(&addr), &addrLen);
+    auto incomingSock = withRetry(accept, sock, reinterpret_cast<sockaddr*>(&addr), &addrLen);
 
-    if (incomingSock != -1) goto accept_return_socket;
+    if (incomingSock != INVALID_SOCK) goto accept_return_socket;
 
-    if (errno != EWOULDBLOCK || !ctx.blocking) {
-        resp.err = NetworkCodes::errnoToPalm(errno);
+    if (SOCK_ERRNO != SOCK_EWOULDBLOCK || !ctx.blocking) {
+        resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
         return;
     }
 
@@ -1190,7 +1310,7 @@ void NetworkSession::HandleSocketAccept(MsgSocketAcceptRequest& request, MsgResp
 
     switch (withRetry(poll, fds, 1, normalizeTimeout(request.timeout))) {
         case -1:
-            cerr << "poll failed during accept: " << errno << endl;
+            cerr << "poll failed during accept: " << SOCK_ERRNO << endl;
             resp.err = NetworkCodes::netErrInternal;
             return;
 
@@ -1209,8 +1329,8 @@ void NetworkSession::HandleSocketAccept(MsgSocketAcceptRequest& request, MsgResp
 
     addrLen = sizeof(addr);
     incomingSock = withRetry(accept, sock, reinterpret_cast<sockaddr*>(&addr), &addrLen);
-    if (incomingSock == -1) {
-        resp.err = NetworkCodes::errnoToPalm(errno);
+    if (incomingSock == INVALID_SOCK) {
+        resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
         return;
     }
 
@@ -1221,7 +1341,7 @@ accept_return_socket:
     if (handle < 0) {
         cerr << "no free handles left during accept, shutting down disposing incoming socket"
              << endl;
-        close(incomingSock);
+        closeSocket(incomingSock);
 
         resp.err = NetworkCodes::netErrInternal;
         return;
@@ -1240,16 +1360,16 @@ int32_t NetworkSession::GetFreeHandle() {
     return -1;
 }
 
-int NetworkSession::SocketForHandle(uint32_t handle) const {
-    if (handle > MAX_HANDLE) return -1;
+sock_t NetworkSession::SocketForHandle(uint32_t handle) const {
+    if (handle > MAX_HANDLE) return INVALID_SOCK;
 
     const auto& socketContext = sockets[handle];
-    if (!socketContext) return -1;
+    if (!socketContext) return INVALID_SOCK;
 
     return socketContext->sock;
 }
 
-std::optional<uint32_t> NetworkSession::HandleForSocket(int sock) const {
+std::optional<uint32_t> NetworkSession::HandleForSocket(sock_t sock) const {
     for (uint32_t handle = 1; handle <= MAX_HANDLE; handle++) {
         if (sockets[handle] && sockets[handle]->sock == sock) return handle;
     }
@@ -1267,7 +1387,7 @@ bool NetworkSession::bufferEncodeCb(pb_ostream_t* stream, const pb_field_iter_t*
     return pb_encode_string(stream, buffer->data.get(), buffer->size);
 }
 
-NetworkSession::SocketContext::SocketContext(int sock) : sock(sock) {}
+NetworkSession::SocketContext::SocketContext(sock_t sock) : sock(sock) {}
 
 void NetworkSession::SendResponse(MsgResponse& response, size_t size) {
     if (rpcResponse.size() < size) rpcResponse.resize(size);

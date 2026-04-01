@@ -1,5 +1,9 @@
 #include "networkBackend.h"
 
+#ifdef _WIN32
+    #include <winsock2.h>
+#endif
+
 #include <cstdint>
 #include <iostream>
 #include <memory>
@@ -13,6 +17,19 @@ using namespace std;
 
 using SessionsT = unordered_map<uint32_t, unique_ptr<NetworkSession>>;
 using TerminatingSessionsT = unordered_set<unique_ptr<NetworkSession>>;
+
+#ifdef _WIN32
+namespace {
+    struct WinsockInit {
+        WinsockInit() {
+            WSADATA wsaData;
+            WSAStartup(MAKEWORD(2, 2), &wsaData);
+        }
+        ~WinsockInit() { WSACleanup(); }
+    };
+    static WinsockInit winsockInit;
+}  // namespace
+#endif
 
 namespace {
     void defaultResultCb(uint32_t, const uint8_t*, size_t, void*) {}

@@ -1,8 +1,6 @@
 #ifndef _NETWORK_CODES_H_
 #define _NETWORK_CODES_H_
 
-#include <sys/socket.h>
-
 #include <cstdint>
 
 namespace NetworkCodes {

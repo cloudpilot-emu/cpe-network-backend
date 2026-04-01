@@ -1,7 +1,12 @@
 #include "sockopt.h"
 
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <netinet/ip.h>
+    #include <netinet/tcp.h>
+#endif
 #include <string.h>
 
 #include <algorithm>
@@ -72,8 +77,10 @@ namespace {
             case netSocketOptTCPNoDelay:
                 return TCP_NODELAY;
 
+#ifdef TCP_MAXSEG
             case netSocketOptTCPMaxSeg:
                 return TCP_MAXSEG;
+#endif
 
             default:
                 return nullopt;

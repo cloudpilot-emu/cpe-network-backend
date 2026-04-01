@@ -1,6 +1,15 @@
 #ifndef _NETWORK_SESSION_H_
 #define _NETWORK_SESSION_H_
 
+#ifdef _WIN32
+    #include <winsock2.h>
+    typedef SOCKET sock_t;
+    constexpr sock_t INVALID_SOCK = INVALID_SOCKET;
+#else
+    typedef int sock_t;
+    constexpr sock_t INVALID_SOCK = -1;
+#endif
+
 #include <array>
 #include <atomic>
 #include <condition_variable>
@@ -37,9 +46,9 @@ class NetworkSession {
 
    private:
     struct SocketContext {
-        explicit SocketContext(int sock);
+        explicit SocketContext(sock_t sock);
 
-        int sock{-1};
+        sock_t sock{INVALID_SOCK};
         bool blocking{true};
     };
 
@@ -67,6 +76,7 @@ class NetworkSession {
     void HandleSocketReceive(MsgSocketReceiveRequest& request, Buffer* receivePayload,
                              MsgResponse& response);
     void HandleSettingsGet(MsgSettingGetRequest& request, MsgResponse& response);
+    void HandleSettingsGetDNS(MsgSettingGetResponse& resp, size_t dnsLevel);
     void HandleGetHostByName(MsgGetHostByNameRequest& request, MsgResponse& response);
     void HandleGetServByName(MsgGetServByNameRequest& request, MsgResponse& response);
     void HandleSocketShutdown(MsgSocketShutdownRequest& request, MsgResponse& response);
@@ -74,8 +84,8 @@ class NetworkSession {
     void HandleSocketAccept(MsgSocketAcceptRequest& request, MsgResponse& response);
 
     int32_t GetFreeHandle();
-    int SocketForHandle(uint32_t handle) const;
-    std::optional<uint32_t> HandleForSocket(int sock) const;
+    sock_t SocketForHandle(uint32_t handle) const;
+    std::optional<uint32_t> HandleForSocket(sock_t sock) const;
 
     static bool bufferEncodeCb(pb_ostream_t* stream, const pb_field_iter_t* field,
                                void* const* arg);
