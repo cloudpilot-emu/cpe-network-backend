@@ -736,13 +736,17 @@ void NetworkSession::HandleSocketConnect(MsgSocketConnectRequest& request, MsgRe
 
     if (withRetry(connect, sock, reinterpret_cast<sockaddr*>(saddr.get()), saddrLen) == 0) return;
 
-    if ((SOCK_ERRNO != SOCK_EINPROGRESS && SOCK_ERRNO != SOCK_EALREADY) || !ctx.blocking) {
+    if ((SOCK_ERRNO != SOCK_EINPROGRESS && SOCK_ERRNO != SOCK_EALREADY
+        #ifdef _WIN32
+           &&  SOCK_ERRNO != WSAEWOULDBLOCK
+        #endif
+    ) || !ctx.blocking) {
         resp.err = NetworkCodes::errnoToPalm(SOCK_ERRNO);
         return;
     }
 
     pollfd fds[] = {
-        {.fd = sock, .events = POLLERR | POLLHUP | POLLRDNORM | POLLWRNORM, .revents = 0}};
+        {.fd = sock, .events = POLLRDNORM | POLLWRNORM, .revents = 0}};
 
     switch (withRetry(poll, fds, 1, normalizeTimeout(request.timeout))) {
         case -1: {
@@ -895,7 +899,7 @@ void NetworkSession::HandleSocketSend(MsgSocketSendRequest& request, const Buffe
         }
 
         pollfd fds[] = {{.fd = sock, .events = 0, .revents = 0}};
-        fds[0].events = POLLERR | POLLHUP | ((flags & MSG_OOB) ? POLLWRBAND : POLLWRNORM);
+        fds[0].events =  (flags & MSG_OOB) ? POLLWRBAND : POLLWRNORM;
 
         switch (withRetry(poll, fds, 1, static_cast<int>(timeout - (now - timestampStart)))) {
             case -1: {
@@ -986,7 +990,7 @@ void NetworkSession::HandleSocketReceive(MsgSocketReceiveRequest& request, Buffe
         }
 
         pollfd fds[] = {{.fd = sock, .events = 0, .revents = 0}};
-        fds[0].events = POLLERR | POLLHUP | ((flags & MSG_OOB) ? POLLRDBAND : POLLRDNORM);
+        fds[0].events = (flags & MSG_OOB) ? POLLRDBAND : POLLRDNORM;
 
         const int pollResult =
             withRetry(poll, fds, 1, static_cast<int>(timeout - (now - timestampStart)));
