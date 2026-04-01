@@ -20,7 +20,7 @@ uint16_t NetworkCodes::errnoToPalm(int err) {
         case WSAEINTR:
             return netErrUserCancel;
 
-        case WSAENOMEM:
+        case WSA_NOT_ENOUGH_MEMORY:
         case WSAENOBUFS:
             return netErrOutOfMemory;
 
@@ -222,7 +222,7 @@ uint16_t NetworkCodes::gaiErrorToPalm(int err) {
         case EAI_FAIL:
             return netErrDNSRefused;
 
-#ifdef EAI_NODATA
+#if defined(EAI_NODATA) && EAI_NODATA != EAI_NONAME
         case EAI_NODATA:
             return netErrDNSNonexistantName;
 #endif

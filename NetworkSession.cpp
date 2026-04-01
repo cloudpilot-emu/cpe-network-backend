@@ -788,7 +788,6 @@ void NetworkSession::HandleSelect(MsgSelectRequest& request, MsgResponse& respon
         fds[fdcnt] = {.fd = fd, .events = 0, .revents = 0};
         if (mask & request.readFDs) fds[fdcnt].events |= POLLRDNORM;
         if (mask & request.writeFDs) fds[fdcnt].events |= POLLWRNORM;
-        if (mask & request.exceptFDs) fds[fdcnt].events |= (POLLERR | POLLHUP);
 
         fdcnt++;
     }
