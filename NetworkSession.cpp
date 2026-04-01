@@ -319,7 +319,7 @@ void NetworkSession::Start() {
     signal(SIGPIPE, SIG_IGN);
 #endif
 
-    worker = thread(bind(&NetworkSession::WorkerMain, this));
+    thread(bind(&NetworkSession::WorkerMain, this)).detach();
     hasStarted = true;
 
     LOG("network session started\n");
@@ -399,7 +399,6 @@ void NetworkSession::WorkerMain() {
         closeSocket(ctx->sock);
     }
 
-    worker.detach();
     hasTerminated = true;
 }
 

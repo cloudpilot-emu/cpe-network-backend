@@ -3,11 +3,11 @@
 
 #ifdef _WIN32
     #include <winsock2.h>
-    typedef SOCKET sock_t;
-    constexpr sock_t INVALID_SOCK = INVALID_SOCKET;
+typedef SOCKET sock_t;
+constexpr sock_t INVALID_SOCK = INVALID_SOCKET;
 #else
-    typedef int sock_t;
-    constexpr sock_t INVALID_SOCK = -1;
+typedef int sock_t;
+constexpr sock_t INVALID_SOCK = -1;
 #endif
 
 #include <array>
@@ -105,7 +105,6 @@ class NetworkSession {
 
     std::mutex dispatchMutex;
     std::condition_variable dispatchCv;
-    std::thread worker;
 
     bool hasStarted{false};
     bool terminateRequested{false};
