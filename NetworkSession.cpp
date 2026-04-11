@@ -157,7 +157,7 @@ namespace {
     }
 
     bool encodeSockaddr(const sockaddr* saddr, Address& addr, socklen_t len) {
-        if (len < sizeof(sockaddr_in) || saddr->sa_family != AF_INET) return false;
+        if (static_cast<size_t>(len) < sizeof(sockaddr_in) || saddr->sa_family != AF_INET) return false;
         const auto saddr4 = reinterpret_cast<const sockaddr_in*>(saddr);
 
         addr.ip = ntohl(saddr4->sin_addr.s_addr);
